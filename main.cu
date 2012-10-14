@@ -80,8 +80,8 @@ int main()
 	double size_x=1.0,
 	       size_y=1.0;
 	
-	int N_x=10, //element count x
-		N_y=10; //element count y
+	int N_x=89, //element count x
+		N_y=89; //element count y
 
 	//total element count
 	int elem_count=N_x*N_y;
@@ -94,6 +94,9 @@ int main()
 
 	//right-hand side of b of the FEM equations (ignoring boundary conditions)
 	double* b= new double[node_count];
+
+	//colour mapping
+	int* c_mapping= new int[elem_count];
 
 	//degree of Bernstein polynom for quadrilateral elements n<=3 for 2x2 Gaussian quadrature
 	int n=1;
@@ -150,6 +153,7 @@ int main()
 
 	//each element is given a Block of 4x4 threads to compute the
 	//local stiffness matrix and its contribution to the global stiffness matrix
+	
 
 	//blocks per Grid
 	dim3 dimGrid(N_x,N_y,1);
@@ -161,41 +165,50 @@ int main()
 	double *A_device;
 	double *b_device;
 	int* g_mapping_device;
+	int* c_mapping_device;
 
 	//allocate respective memory for the global stiffness matrix on the GPU , the solution vector and the gobal node mapping
 
 	cudaMalloc((void**)&A_device, node_count*node_count*sizeof(double));
 	cudaMalloc((void**)&b_device,			 node_count*sizeof(double));
-	cudaMalloc((void**)&g_mapping_device, elem_count*4*sizeof(int));	
+	cudaMalloc((void**)&g_mapping_device,     elem_count*4*sizeof(int));	
+	cudaMalloc((void**)&c_mapping_device,       elem_count*sizeof(int));
 
+	//compute colouring for 2d equidistant element nodes 
+	/* next step: use greedy algorithm to compute colouring of more general triangulations*/
 	
+	for(int i=0; i<N_x; i++)
+		for(int j=0; j<N_y; j++)
+			c_mapping[i+j*N_x]=(i%2)+2*(j%2);
+
 	
 
 	//copy precomputed values to GPU e.g. zero values
 
 	cudaMemcpy(A_device,A,sizeof(double)*node_count*node_count,cudaMemcpyHostToDevice);
 	cudaMemcpy(g_mapping_device,elements,elem_count*4*sizeof(int),cudaMemcpyHostToDevice);
-
-
+	cudaMemcpy(c_mapping_device,c_mapping,elem_count*sizeof(int),cudaMemcpyHostToDevice);
 	//get the size of the respektive element (in this cas element 0) assuming every element has the same size
 	//otherwise the element sizes have to be copied to the gpu and x_ass_A hass to be launched including the sizes for every element it evaluates
+	
 	double el_x, el_y;//
 
 	el_x=nodes_x[elements[1]]-nodes_x[elements[0]];
 	el_y=nodes_y[elements[3]]-nodes_x[elements[0]];
-					
+	
+	
 	//construct A on GPU ussing mesh colouring to prevent race condition
-	/*next step: reduce kernels to one and apply greedy algorithm to find a mesh colouring iterate kernel over the colors of the mesh*/
-	red_ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device,el_x,el_y, n, N_x,N_y);
-	pink_ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device,el_x,el_y, n, N_x,N_y);
-	blue_ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device,el_x,el_y, n, N_x,N_y);
-	yellow_ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device,el_x,el_y, n, N_x,N_y);
-
+	for(int color=0;color<4;color++)
+		//for(int i=0;i<N_x/16.0;i++)
+			//for(int j=0;j<N_y/16.0;j++)
+		ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device, c_mapping_device, el_x,el_y, n, N_x,N_y, color,0,0);
+		
 	//copy assembled stiffness matrix back to host
 	cudaMemcpy(A, A_device, sizeof(double)*node_count*node_count, cudaMemcpyDeviceToHost);
-
+	
 	//compute load vector using 1 point gaussian quadrature 
 	/*has yet to be implemented in cuda*/
+	
 	double b_sub[4];
 	for(int i=0;i<4;i++)
 		b_sub[i]=0.25*f*el_x*el_y;
@@ -216,7 +229,7 @@ int main()
 	cudaFree(A_device);
 	cudaFree(g_mapping_device);
 	cudaFree(b_device);
-    
+    cudaFree(c_mapping_device);
 		
 	//apply dirichlet boundary conditions	
 	
@@ -237,6 +250,7 @@ int main()
 	/*next step apply cuda matrix vector product kernels to accelerate CG method*/
 
 	//allocating necessary memory for CG-method
+		
 	double* x =new double[node_count];
 	double* Ax =new double[node_count];
 	double* Ap =new double[node_count];
@@ -310,6 +324,7 @@ int main()
 	*/
 
 	//create file output of the solution vector
+	
 	ofstream File("output.txt");
 	for(int j=0;j<N_y+1;j++){
 	File << "{";
@@ -334,5 +349,6 @@ int main()
 	free(Ap);
 	free(r);
 	free(p);
+	free(c_mapping);
     return 0;
 }
