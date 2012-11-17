@@ -8,7 +8,8 @@
 #include "device_launch_parameters.h"
 #include "kernel.cuh"
 
-
+#define _USE_MATH_DEFINES
+#include <math.h>
 using namespace std;
 
 
@@ -19,52 +20,15 @@ __global__ void square_array(float *a, int N)
   if (idx<N) a[idx] = a[idx] * a[idx];
 }
 
-class nodes {
-	double x,y;	
-public:
-	double getx ();
-	double gety ();
-
-};
-
-double nodes::getx(){
-	return x;
-}
-double nodes::gety(){
-	return y;
-}
 
 
 
 //evauates bernstein polynomial of n-th degree and returns the value of B^n_i(x) forall i may be used in future iterations for polynome degree >1
-double* eval_bernstein(int n, double x){
-	double *bernstein;
-	int j;
 
-	bernstein = new double[n+1];
-
-	if (n==0)
-	{
-		bernstein[0] = 1.0;
-	}
-	else if (0<n)
-	{
-		bernstein[0]=1.0-x;
-		bernstein[1]=x;
- 
-		for (int i=2;i<=n;i++)
-		{
-			bernstein[i]=x*bernstein[i-1];
-			for (j=i-1;1<=j;j--)
-			{
-				bernstein[j]=x*bernstein[j-1]+(1.0-x)*bernstein[j];
-			}
-			bernstein[0]=(1.0-x)*bernstein[0];
-		}
-	}
-	return bernstein;
+double func(double x, double y)
+{
+	return -2*M_PI*M_PI*cos(2*M_PI*x)*sin(M_PI*y)*sin(M_PI*y)-2*M_PI*M_PI*cos(2*M_PI*y)*sin(M_PI*x)*sin(M_PI*x);
 }
-
 int main()
 {
 	//solving //-Δu=f with f=const and u=g=const on borders
@@ -80,8 +44,8 @@ int main()
 	double size_x=1.0,
 	       size_y=1.0;
 	
-	int N_x=89, //element count x
-		N_y=89; //element count y
+	int N_x=15, //element count x
+		N_y=15; //element count y
 
 	//total element count
 	int elem_count=N_x*N_y;
@@ -99,7 +63,9 @@ int main()
 	int* c_mapping= new int[elem_count];
 
 	//degree of Bernstein polynom for quadrilateral elements n<=3 for 2x2 Gaussian quadrature
-	int n=1;
+	int n=2;
+
+	
 
 	//initializing A and b
 	for(int i=0;i<node_count;i++)
@@ -161,19 +127,31 @@ int main()
 	//threads per Block
 	dim3 dimBlock(4,4,1);
 	
-
+	//stores values of bernsteinpolynomials of degree n
+	double *bernstein_q0;
+	double *bernstein_q1;
+	double *dbernstein_q0;
+	double *dbernstein_q1;
 	double *A_device;
 	double *b_device;
 	int* g_mapping_device;
 	int* c_mapping_device;
 
-	//allocate respective memory for the global stiffness matrix on the GPU , the solution vector and the gobal node mapping
+	unsigned int freem, t;
+	cudaMemGetInfo(&freem, &t);
+	cout << "Free Memory:" << freem << endl; 
 
+	//allocate respective memory for the global stiffness matrix on the GPU , the solution vector and the gobal node mapping
+	if ( cudaSuccess != cudaMalloc((void**)&A_device, node_count*node_count*sizeof(double)) )
+	    printf( "Error not enough memory!\n" );
 	cudaMalloc((void**)&A_device, node_count*node_count*sizeof(double));
 	cudaMalloc((void**)&b_device,			 node_count*sizeof(double));
 	cudaMalloc((void**)&g_mapping_device,     elem_count*4*sizeof(int));	
 	cudaMalloc((void**)&c_mapping_device,       elem_count*sizeof(int));
-
+	cudaMalloc((void**)&bernstein_q0,			 (n+1)*sizeof(double));
+	cudaMalloc((void**)&bernstein_q1,			 (n+1)*sizeof(double));
+	cudaMalloc((void**)&dbernstein_q0,			 (n+1)*sizeof(double));
+	cudaMalloc((void**)&dbernstein_q1,			 (n+1)*sizeof(double));
 	//compute colouring for 2d equidistant element nodes 
 	/* next step: use greedy algorithm to compute colouring of more general triangulations*/
 	
@@ -196,12 +174,13 @@ int main()
 	el_x=nodes_x[elements[1]]-nodes_x[elements[0]];
 	el_y=nodes_y[elements[3]]-nodes_x[elements[0]];
 	
-	
+	//precompute values of bernstein polynomials and its derivate
+	compute_bernstein<<<1, 4>>>(bernstein_q0,dbernstein_q0, bernstein_q1, dbernstein_q1, n);
 	//construct A on GPU ussing mesh colouring to prevent race condition
 	for(int color=0;color<4;color++)
 		//for(int i=0;i<N_x/16.0;i++)
 			//for(int j=0;j<N_y/16.0;j++)
-		ass_A<<<dimGrid, dimBlock>>>(A_device, g_mapping_device, c_mapping_device, el_x,el_y, n, N_x,N_y, color,0,0);
+		ass_A_exact<<<dimGrid, dimBlock>>>(A_device, g_mapping_device, c_mapping_device, el_x,el_y, n, N_x,N_y, color,0,0);
 		
 	//copy assembled stiffness matrix back to host
 	cudaMemcpy(A, A_device, sizeof(double)*node_count*node_count, cudaMemcpyDeviceToHost);
@@ -210,16 +189,39 @@ int main()
 	/*has yet to be implemented in cuda*/
 	
 	double b_sub[4];
+	double xc,yc;
+	int m;
+	for(int k=0;k<elem_count;k++){
+		//get x,y cordinate from the element k of point P_0
+	//cout << "Element k=" << k << endl;
+		for(int i=0;i<4;i++)
+		{
+			xc=nodes_x[elements[4*k+i]];
+			yc=nodes_y[elements[4*k+i]];
+		//	cout <<"i= " <<i << "   x: " << xc << "  y: "<< yc << endl;
+			b_sub[i]=1.0/((n+1)*(n+1))*func(xc,yc)*el_x*el_y;
+		}
+			for(int i=0;i<4;i++){
+				m=elements[i+k*4];
+				b[m]+=b_sub[i];
+			}
+		
+	}
+
+	//old
+	/*
+	cout << n << endl;
 	for(int i=0;i<4;i++)
-		b_sub[i]=0.25*f*el_x*el_y;
+		//b_sub[i]=0.25*f*el_x*el_y;
+		b_sub[i]=1.0/((n+1)*(n+1))*f*el_x*el_y;
 	int m;
 	for(int k=0;k<elem_count;k++){
 		for(int i=0;i<4;i++){
-			m=elements[i+k*4];
+			m=elementss[i+k*4];
 			b[m]+=b_sub[i];
 
 		}
-	}
+	}*/
 	
 
 	
@@ -245,12 +247,12 @@ int main()
 			A[i+i*node_count]=1;
 			b[i]=g;
 		}
-			
+
 	//solve Ax=b with CG method
 	/*next step apply cuda matrix vector product kernels to accelerate CG method*/
 
 	//allocating necessary memory for CG-method
-		
+	
 	double* x =new double[node_count];
 	double* Ax =new double[node_count];
 	double* Ap =new double[node_count];
@@ -311,7 +313,7 @@ int main()
 		//print Norm to console every iteration
 		cout << k << " Norm: " << norm << endl;
 	}
-
+	
 	//matrix output
 	/*
 	cout.precision(3);
@@ -322,20 +324,24 @@ int main()
 			cout << endl;			
 		}
 	*/
-
+	
 	//create file output of the solution vector
 	
 	ofstream File("output.txt");
-	for(int j=0;j<N_y+1;j++){
 	File << "{";
-	for(int i=0;i<N_x;i++)		
+	for(int j=0;j<N_y+1;j++)
+	{
+		File << "{";
+		for(int i=0;i<N_x;i++)		
 			File <<x[i+j*(N_x+1)] << "," ;
-	File <<x[N_x+j*(N_x+1)];
-
-	File << "},";
-}
+		File <<x[N_x+j*(N_x+1)];
+		File << "}";
+		if(j!=N_y)
+			File << ",";		
+	}
+	File << "}";
 	File.close();
-
+	
 	//CODE
 	double test;
 	cin >> test ;
