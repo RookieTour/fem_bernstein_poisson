@@ -141,6 +141,8 @@ __global__ void ass_A_exact(double a, double b, coordinates *coo_index, double*c
 						if((j>0) && (i>0))
 							sum+=M_m[i-1+(n-1)*(j-1)];
 					}	
+					else
+						sum=1;
 					B[i+j+n*n*(k+l)]=M[i+j*n]*b/a*(sum);		
 					sum=0;
 					if(n>1)
@@ -154,6 +156,8 @@ __global__ void ass_A_exact(double a, double b, coordinates *coo_index, double*c
 						if((k>0) && (l>0))
 							sum+=M_m[k-1+(n-1)*(l-1)];
 					}
+					else
+						sum=1;
 				
 					B[i+j+n*n*(k+l)]+=M[k+l*n]*a/b*(sum);
 					B[i+j+n*n*(k+l)]*=n*n/(4*n*n-1);
