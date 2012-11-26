@@ -2,11 +2,12 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-struct coordinates{         /* deklariert den Strukturtyp person */
+struct coordinates{    
     int i;
 	int j;
 
   } ;
+  
 __global__ void BernBinomCoeff(double *M, int n)
 {
 	 int i= threadIdx.x;
