@@ -581,7 +581,7 @@ void printMatrix(double* A, int n, int m)
 //works as intended maybe modify to overload and print int and doubles in one routine
 void printMatrix_int(int* A, int n, int m)
 {
-	cout.precision(5);
+	cout.precision(2);
 	for(int j=0;j<m;j++){			
 			for(int i=0;i<n;i++){			 
 				cout << A[i+j*m]<< "|";
@@ -591,15 +591,33 @@ void printMatrix_int(int* A, int n, int m)
 		
 }
 
+void testMatrixSym(double* A, int n, int m)
+{
+	
+	for(int j=0;j<m;j++)
+	{			
+		for(int i=0;i<n;i++)
+		{			 
+			if (A[i+j*n]!=A[j+i*n])
+			{
+				cout << "Nicht symmetrisch" << endl;
+				return;
+			}
+		
+		}
+		
+	}
+	cout <<"Ist symmetrisch"<< endl;		
+}
  
 int main()
 {
 	/*Simulation Variables*/
 	int degree=1;	
-	int elementsX=10;
-	int elementsY=10;
-	double sizeX=1.0;
-	double sizeY=1.0;
+	int elementsX=4;
+	int elementsY=2;
+	double sizeX=4.0;
+	double sizeY=2.0;
 	
 
 	/*variables necessary for computation*/
@@ -620,11 +638,11 @@ int main()
 
 	dim3 dimGrid(1,1,1);
 	dim3 dimBlock(elementsX*elementsY,1,1);
-	dim3 dimBlockM(degree,degree,1);
-	dim3 dimBlockM_m(degree-1,degree-1,1);
-	cudaMalloc((void**)&coo_values_device, ElementCount*PointsPerElement*sizeof(double));
-	cudaMalloc((void**)&M_device, degree*degree*sizeof(double));
-	cudaMalloc((void**)&M_m_device, (degree-1)*(degree-1)*sizeof(double));
+	dim3 dimBlockM(degree+1,degree+1,1);
+	dim3 dimBlockM_m(degree,degree,1);
+	cudaMalloc((void**)&coo_values_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(double));
+	cudaMalloc((void**)&M_device, (degree+1)*(degree+1)*sizeof(double));
+	cudaMalloc((void**)&M_m_device, degree*degree*sizeof(double));
 	cudaMalloc((void**)&elements_device, ElementCount*PointsPerElement*sizeof(int));
 	cudaMalloc((void**)&coo_index_device, ElementCount*PointsPerElement*sizeof(int)*2);
 
@@ -633,7 +651,7 @@ int main()
 	elements=createTriangulation(coordinatesX,coordinatesY,degree,elementsX,elementsY,sizeX,sizeY);
 	
 	/*copy necessarry memory to device*/	
-	cudaMemcpy(elements,elements_device, ElementCount*PointsPerElement*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(elements_device,elements, ElementCount*PointsPerElement*sizeof(int), cudaMemcpyHostToDevice);
 
 
 
@@ -641,20 +659,27 @@ int main()
 	double a=sizeX/elementsX;
 	double b=sizeY/elementsY;
 	BernBinomCoeff<<<dimGrid, dimBlockM>>>(M_device, degree);
-	if (degree>1)
-		BernBinomCoeff<<<dimGrid, dimBlockM_m>>>(M_m_device, degree-1);
-	
-	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_index_device,coo_values_device,degree, elements_device, M_device, M_m_device);
 
-	/* convert coo output into crs format*/
+	BernBinomCoeff<<<dimGrid, dimBlockM_m>>>(M_m_device, degree-1);
+	
+
+	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_index_device,coo_values_device,degree, elements_device, M_device, M_m_device);
 
 	/*assemble load vector*/
 
 	/*apply dirichlet boundary conditions*/
 
+	/* convert coo output into crs format*/
+
 	/*solve system of equations*/
 
 	/*write solution into file*/
+
+	double *coo_values = new double[ElementCount*PointsPerElement*PointsPerElement];
+	cudaMemcpy(coo_values,coo_values_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(double), cudaMemcpyDeviceToHost);
+	printMatrix(coo_values, (degree+1)*( degree+1),(degree+1)*( degree+1));
+
+	testMatrixSym(coo_values,(degree+1)*(degree+1),(degree+1)*(degree+1));
 
 	/*free memory*/
 	cudaFree(coo_values_device);
@@ -662,7 +687,7 @@ int main()
 	cudaFree(elements_device);
 	cudaFree(M_device);
 	cudaFree(M_m_device);
-	
+	free(coo_values);
 
 
 	/*

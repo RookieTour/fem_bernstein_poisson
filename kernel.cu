@@ -2,12 +2,11 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-struct coordinates{    
+struct coordinates{       
     int i;
 	int j;
+};
 
-  } ;
-  
 __global__ void BernBinomCoeff(double *M, int n)
 {
 	 int i= threadIdx.x;
@@ -131,46 +130,46 @@ __global__ void ass_A_exact(double a, double b, coordinates *coo_index, double*c
 			for (int k=0; k<=n;k++)
 				for(int l=0; l<=n;l++)
 				{
-					if(n>1)
-					{
-						sum=M_m[i+(n-1)*j];
-
-						if(i>0)
-							sum-=M_m[i-1+(n-1)*j];
-						if(j>0)
-							sum-=M_m[i+(n-1)*(j-1)];
-						if((j>0) && (i>0))
-							sum+=M_m[i-1+(n-1)*(j-1)];
-					}	
-					else
-						sum=1;
-					B[i+j+n*n*(k+l)]=M[i+j*n]*b/a*(sum);		
 					sum=0;
-					if(n>1)
-					{
-						sum=M_m[k+(n-1)*l];
+					shift=i+j*(degree+1)+(degree+1)*(degree+1)*(k+l*(degree+1));
+					//i=0,k=2 bzw k=2 i=0 kommen nicht die selben dinge raus sollte die obere grenze mit i<=n und j<=n genommen werden?
+					if((i<n) && (k<n))
+						sum+=M_m[i+n*k];
+					
+						if((i>0) && (i-1<n) && (k<n))
+							sum-=M_m[i-1+n*k];
+						if((k>0)&& (i<n) && (k-1<n))
+							sum-=M_m[i+n*(k-1)];
+						if((k>0) && (i>0) && (i-1<n)&& (k-1<n))
+							sum+=M_m[i-1+n*(k-1)];
+					
+
+					B[shift]=M[j+l*(n+1)]*b/a*sum;
+					sum=0;
+					if((j<n) && (l<n))
+						sum=M_m[j+n*l];
 				
-						if(k>0)
-							sum-=M_m[k-1+(n-1)*l];
-						if(l>0)
-							sum-=M_m[k+(n-1)*(l-1)];
-						if((k>0) && (l>0))
-							sum+=M_m[k-1+(n-1)*(l-1)];
-					}
-					else
-						sum=1;
+						if((j>0) && (j-1<n) && (l<n))
+							sum-=M_m[j-1+n*l];
+						if((l>0)&& (j<n) && (l-1<n))
+							sum-=M_m[j+n*(l-1)];
+						if((l>0) && (j>0) && (j-1<n)&& (l-1<n))
+							sum+=M_m[j-1+n*(l-1)];
 				
-					B[i+j+n*n*(k+l)]+=M[k+l*n]*a/b*(sum);
-					B[i+j+n*n*(k+l)]*=n*n/(4*n*n-1);
+				
+					B[shift]+=M[i+k*(n+1)]*a/b*(sum);
+			
+					//B[shift]*=(double)(n*n)/(4*n*n-1);
+					
 					//start dumping values into coo list
-						shift=i+j+n*n*(k+l);
+			
 						
 						i_glob=elements[k*(n+1)*(n+1)+i+j];
 						j_glob=elements[k*(n+1)*(n+1)+k+l];
 						
 						coo_index[element*(n+1)*(n+1)+shift].i=i_glob;
 						coo_index[element*(n+1)*(n+1)+shift].j=j_glob;
-						coo_value[element*(n+1)*(n+1)+shift]=B[i+j+n*n*(k+l)];
+						coo_value[element*(n+1)*(n+1)+shift]=B[shift];
 				}
 
 		
