@@ -1,0 +1,1 @@
+void quickSort(double *arr,int *index_i, int *index_j, int left, int right);

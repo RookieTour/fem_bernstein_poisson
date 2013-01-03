@@ -8,18 +8,151 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "kernel.cuh"
+#include "cusparse.h"
 
 #define _USE_MATH_DEFINES
 #include <math.h>
 using namespace std;
 
+
+
+void quickSort(double *arr,int *index_i, int *index_j, int left, int right) {
+      int i = left, j = right;
+      double tmp;
+	  int itemp, jtemp;
+      int pivot = index_i[(left + right) / 2];
+
+ 
+      /* partition */
+      while (i <= j) {
+            while (index_i[i] < pivot)
+                  i++;
+            while (index_i[j] > pivot)
+                  j--;
+            if (i <= j) {
+                  tmp = arr[i];
+				  itemp = index_i[i];
+				  jtemp = index_j[i];
+
+				  index_i[i]=index_i[j];
+				  index_j[i]=index_j[j];
+                  arr[i] = arr[j];
+				  index_i[j]=itemp;
+				  index_j[j]=jtemp;
+                  arr[j] = tmp;
+                  i++;
+                  j--;
+            }
+      };
+ 
+      /* recursion */
+      if (left < j)
+            quickSort(arr,index_i, index_j, left, j);
+      if (i < right)
+            quickSort(arr,index_i, index_j, i, right);
+}
+
+
+void SortCOO(double *coo_values, int *coo_row, int *coo_col,int PointsPerElement, int ElementCount)
+{
+	quickSort(coo_values,coo_row,coo_col,0,PointsPerElement*PointsPerElement*ElementCount-1);
+		int start=0;
+		int end;
+		int j=0;
+		for(int i=0;i<ElementCount*PointsPerElement;i++)
+		{
+			while(coo_row[j]==i)
+			{
+				j++;
+			}
+			end=j-1;
+			quickSort(coo_values,coo_col,coo_row,start,end);
+			start=end+1;
+		}
+
+}
 //works as intended
+
+
+int reduceCOO(double *coo_values, int *coo_row, int *coo_col,int PointsPerElement, int ElementCount)
+{
+	int zeroEntries=0;
+	int j;
+	for(unsigned long int i=0; i<PointsPerElement*PointsPerElement*ElementCount;i++)
+	{
+		j=1;
+		while((coo_row[i]==coo_row[i+j]) && (coo_col[i]==coo_col[i+j]) && (i+j<PointsPerElement*PointsPerElement*ElementCount))
+		{
+			coo_values[i]+=coo_values[i+j];
+			coo_values[i+j]=0;
+			zeroEntries++;
+			j++;
+		}
+			
+		i+=j-1;		
+	}
+
+	
+	//put zero entries at the end
+	
+	for(unsigned long int i=0; i<PointsPerElement*PointsPerElement*ElementCount;i++)
+	{
+		if(coo_values[i]==0)
+		{
+			j=0;
+			while((coo_values[i+j]==0) && (i+j<PointsPerElement*PointsPerElement*ElementCount))
+				j++;
+
+			if(i+j<PointsPerElement*PointsPerElement*ElementCount)
+			{
+				coo_values[i]=coo_values[i+j];
+				coo_values[i+j]=0;
+				coo_row[i]=coo_row[i+j];
+				coo_col[i]=coo_col[i+j];
+			}
+			//look for next nz entry j
+			//copy entry to i, set j to zero
+
+		}
+		
+	}
+	return zeroEntries;
+}
+
+void convertCOOtoCSR(double *coo_values, int *coo_row, int *coo_col,int PointsPerElement, int ElementCount,int zeroEntries)
+{
+	double* CSR_values = new double[ElementCount*PointsPerElement*PointsPerElement-zeroEntries];
+	int* CSR_index_col = new int[ElementCount*PointsPerElement*PointsPerElement-zeroEntries];
+	int* CSR_pointer_row = new int[ElementCount*PointsPerElement];
+
+	int k=0;
+	int i=0;
+	int j=0;
+	while((i<ElementCount*PointsPerElement*PointsPerElement-zeroEntries)&& (j<ElementCount*PointsPerElement*PointsPerElement))
+	{
+		if (coo_values[j]!=0)
+		{
+			CSR_values[i]=coo_values[j];
+			CSR_index_col[i]=coo_col[j];
+			
+			if(coo_row[j]==k)
+			{
+				CSR_pointer_row[k]=coo_row[j];
+				k++;
+			}
+			i++;
+			j++;
+		}
+		else
+			j++;
+
+	}
+}
+
 double func(double x, double y)
 {
 	return -2*M_PI*M_PI*cos(2*M_PI*x)*sin(M_PI*y)*sin(M_PI*y)-2*M_PI*M_PI*cos(2*M_PI*y)*sin(M_PI*x)*sin(M_PI*x);
 }
-
-
 
 //works as intended (correct for n=1 , n=2 tested only for specific cases n>2 "seems" okay)
 int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree, int elementsX, int elementsY, double sizeX, double sizeY)
@@ -37,8 +170,8 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 			for(int j=0; j<2;j++)
 			{
 				elements[k*PointsPerElement+i+j*(degree+1)]=k+k/elementsX+i+j*(elementsX+1);
-				coordinatesX[k*PointsPerElement+i+j*(degree+1)]=k*sizeX/elementsX+i*sizeX/elementsX;//to be implemented
-				coordinatesY[k*PointsPerElement+i+j*(degree+1)]=k*sizeY/elementsY+j*sizeY/elementsY;//to be implemented
+				coordinatesX[k*PointsPerElement+i+j*(degree+1)]=k*sizeX/elementsX+i*sizeX/elementsX;
+				coordinatesY[k*PointsPerElement+i+j*(degree+1)]=k*sizeY/elementsY+j*sizeY/elementsY;
 			}
 
 		//center nodes
@@ -83,17 +216,56 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 
 }
 
+int* determineBorders(int elementsX, int elementsY, int degree)
+{
+	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
+
+	int *boundaryNodes= new int[pointCount];
+
+	/*			1		*/
+	/*	-------------	*/
+	/*	|			|	*/
+	/* 	|			|	*/
+	/*2 |			| 3	*/
+	/*	|			|	*/
+	/*	-------------	*/
+	/*			0		*/
+
+	//lower border (0)
+		//Vertex Nodes
+			//0 ... elementsX
+		//Side Nodes
+			//(elementsX+1)*(elementsY+1) ...(elementsX+1)*(elementsY+1) +elementsX*(degree-1)-1
+		
+	//upper border (1)
+		//Vertex Nodes
+			//(elementsX+1)*elementsY...(elementsX+1)*(elementsY+1)-1
+		//Side Nodes
+			//pointCount -elementsX*(degree-1)...pointCount-1
+
+	//left border (2)
+		//Vertex Nodes
+			//i*(elementsX+1) (0<=i<=elementsY)
+		//Side Nodes
+			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
+
+	//right border (3)
+		//Vertex Nodes
+			//i*(elementsX+1)+elementsX (0<=i<=elementsY)
+	//Side Nodes
+			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
+
+}
 //has yet to be tested
-void assembleLoadVector(int degree, int *elements, int elementsX, int elementsY, double *load, double *nodes_x, double *nodes_y)
+double* assembleLoadVector(double a, double b, int degree, int *elements, int elementsX, int elementsY, double *nodes_x, double *nodes_y, int pointCount)
 {
 	int ElementCount=(elementsX+1)*(elementsY+1);
 	int PointsPerElement=(degree+1)*(degree+1);
 	int m;
-	double xc,yc;
-	double a,b;
+	double xc,yc;	
 	double *load_sub;
 	load_sub=new double[PointsPerElement];
-
+	double *load= new double[pointCount];
 	for(int k=0;k<ElementCount;k++)
 	{
 
@@ -112,6 +284,7 @@ void assembleLoadVector(int degree, int *elements, int elementsX, int elementsY,
 			}
 		
 	}
+	return load;
 }
 
 //has yet to be tested
@@ -202,368 +375,6 @@ void applyDirichlet(double* A, int degree, int elementsX, int elementsY,double g
 }
 
 
-void runBernsteinSecondDegree(int n_x, int n_y){
-	//solving //-Δu=f with f=const and u=g=const on borders
-    
-	
-	//value of f
-	//double f=1.0;
-
-	//value of dirichlet border condition
-	double g=0.0;
-
-	//size of the simulated domain
-	double size_x=1,
-	       size_y=1;
-	
-	int N_x=n_x, //element count x
-		N_y=n_y; //element count y
-
-	//total element count
-	int elem_count=N_x*N_y;
-
-	//total count of nodes
-	int node_count=(N_x+1)*(N_y+1);
-
-	//Finite Element System Matrix A
-	double* A =new double[node_count*node_count];
-
-	//right-hand side of b of the FEM equations (ignoring boundary conditions)
-	double* b= new double[node_count];
-
-	//colour mapping
-	int* c_mapping= new int[elem_count];
-
-	//degree of Bernstein polynom for quadrilateral elements n<=3 for 2x2 Gaussian quadrature
-	int n=2;
-
-	
-
-	//initializing A and b
-	for(int i=0;i<node_count;i++)
-	{
-		for(int j=0;j<node_count;j++)
-		{
-			 A[i+j*node_count] = 0.0;
-		}
-	}
-
-	for(int i=0;i<node_count;i++)	
-		b[i]=0.0;
-
-	//create rectangular grid with quadrilateral elements
-	double* nodes_x=NULL;
-	double* nodes_y=NULL;
-	int* elements=NULL;
-
-	nodes_x= new double[node_count];
-	nodes_y= new double[node_count];
-	elements= new int[elem_count*4];
-
-	for(int j=0;j<N_y+1;j++){
-		for(int i=0;i<N_x+1;i++){
-			nodes_x[j*(N_x+1)+i]=(j%2)*size_x+pow(-1.0,j)*(double)size_x*i/N_x;
-			nodes_y[j*(N_x+1)+i]=(double)size_y*j/N_y;
-		}
-	}
-	//example of ordering for a N_x=4 , N_y=2
-	//(10)--(11)--(12)--(13)--(14)
-	//  |     |     |     |     |
-	//  |  7  |  6  |  5  |  4  |
-	//  |     |     |     |     |
-	// (9)---(8)---(7)---(6)---(5)
-	//  |     |     |     |     |
-	//  |  0  |  1  |  2  |  3  |
-	//  |     |     |     |     |
-	// (0)---(1)---(2)---(3)---(4)
-	//
-	for(int j=0;j<N_y;j++){
-		for(int i=0;i<N_x;i++){
-			elements[0+(i+j*N_x)*4]=i+j*(N_x+1)+j%2;
-			elements[1+(i+j*N_x)*4]=elements[0+(i+j*N_x)*4]+pow(-1.0, j+2);
-			elements[3+(i+j*N_x)*4]=-(i+1)+(j+2)*(N_x+1)-(j%2);
-			elements[2+(i+j*N_x)*4]=elements[3+(i+j*N_x)*4]+pow(-1.0, j+1);
-			
-		}
-	}
-	
-	//allocate necessary device pointers and memory
-
-	//each element is given a Block of 4x4 threads to compute the
-	//local stiffness matrix and its contribution to the global stiffness matrix
-	
-
-	//blocks per Grid
-	dim3 dimGrid(N_x,N_y,1);
-
-	//threads per Block
-	dim3 dimBlock(4,4,1);
-	
-	//stores values of bernsteinpolynomials of degree n
-	double *bernstein_q0;
-	double *bernstein_q1;
-	double *dbernstein_q0;
-	double *dbernstein_q1;
-	double *A_device;
-	double *b_device;
-	int* g_mapping_device;
-	int* c_mapping_device;
-
-	unsigned int freem, t;
-	cudaMemGetInfo(&freem, &t);
-	cout << "Free Memory:" << freem << endl; 
-
-	//allocate respective memory for the global stiffness matrix on the GPU , the solution vector and the gobal node mapping
-	if ( cudaSuccess != cudaMalloc((void**)&A_device, node_count*node_count*sizeof(double)) )
-	    printf( "Error not enough memory!\n" );
-	cudaMalloc((void**)&A_device, node_count*node_count*sizeof(double));
-	cudaMalloc((void**)&b_device,			 node_count*sizeof(double));
-	cudaMalloc((void**)&g_mapping_device,     elem_count*4*sizeof(int));	
-	cudaMalloc((void**)&c_mapping_device,       elem_count*sizeof(int));
-	cudaMalloc((void**)&bernstein_q0,			 (n+1)*sizeof(double));
-	cudaMalloc((void**)&bernstein_q1,			 (n+1)*sizeof(double));
-	cudaMalloc((void**)&dbernstein_q0,			 (n+1)*sizeof(double));
-	cudaMalloc((void**)&dbernstein_q1,			 (n+1)*sizeof(double));
-	//compute colouring for 2d equidistant element nodes 
-	/* next step: use greedy algorithm to compute colouring of more general triangulations*/
-	
-	for(int i=0; i<N_x; i++)
-		for(int j=0; j<N_y; j++)
-			c_mapping[i+j*N_x]=(i%2)+2*(j%2);
-
-	
-
-	//copy precomputed values to GPU e.g. zero values
-
-	cudaMemcpy(A_device,A,sizeof(double)*node_count*node_count,cudaMemcpyHostToDevice);
-	cudaMemcpy(g_mapping_device,elements,elem_count*4*sizeof(int),cudaMemcpyHostToDevice);
-	cudaMemcpy(c_mapping_device,c_mapping,elem_count*sizeof(int),cudaMemcpyHostToDevice);
-	//get the size of the respektive element (in this cas element 0) assuming every element has the same size
-	//otherwise the element sizes have to be copied to the gpu and x_ass_A hass to be launched including the sizes for every element it evaluates
-	
-	double el_x, el_y;//
-
-	el_x=nodes_x[elements[1]]-nodes_x[elements[0]];
-	el_y=nodes_y[elements[3]]-nodes_x[elements[0]];
-	
-	//precompute values of bernstein polynomials and its derivate
-	//compute_bernstein<<<1, 4>>>(bernstein_q0,dbernstein_q0, bernstein_q1, dbernstein_q1, n);
-	//construct A on GPU ussing mesh colouring to prevent race condition
-	for(int color=0;color<4;color++)
-		//for(int i=0;i<N_x/16.0;i++)
-			//for(int j=0;j<N_y/16.0;j++)
-//		ass_A_exact<<<dimGrid, dimBlock>>>(A_device, g_mapping_device, c_mapping_device, el_x,el_y, n, N_x,N_y, color,0,0);
-		
-	//copy assembled stiffness matrix back to host
-	cudaMemcpy(A, A_device, sizeof(double)*node_count*node_count, cudaMemcpyDeviceToHost);
-	
-	//compute load vector using 1 point gaussian quadrature 
-	/*has yet to be implemented in cuda*/
-	
-	double b_sub[4];
-	double xc,yc;
-	int m;
-	for(int k=0;k<elem_count;k++){
-		//get x,y cordinate from the element k of point P_0
-		//cout << "Element k=" << k << endl;
-		for(int i=0;i<4;i++)
-		{
-			xc=nodes_x[elements[4*k+i]];
-			yc=nodes_y[elements[4*k+i]];
-			//cout <<"i= " <<i << " global: " << elements[4*k+i]<< "  x: " << xc << "  y: "<< yc << endl;
-			//b_sub[i]=el_x*el_y/((n+1)*(n+1))*func(xc,yc);
-			b_sub[i]=el_x*el_y/(4)*func(xc,yc);
-			//b_sub[i]=el_x*el_y/((n+1)*(n+1))*f;
-			
-		}
-			for(int i=0;i<4;i++){
-				m=elements[i+k*4];
-				b[m]+=b_sub[i];
-			}
-		
-	}
-
-	for(int i=0;i<node_count;i++	)
-		cout << b[i] << endl;
-
-	cout <<"----------------------" << endl;
-
-	//old
-	/*
-	cout << n << endl;
-	for(int i=0;i<4;i++)
-		//b_sub[i]=0.25*f*el_x*el_y;
-		b_sub[i]=1.0/((n+1)*(n+1))*f*el_x*el_y;
-	int m;
-	for(int k=0;k<elem_count;k++){
-		for(int i=0;i<4;i++){
-			m=elementss[i+k*4];
-			b[m]+=b_sub[i];
-
-		}
-	}*/
-	
-
-	
-	
-	
-	//free device memory
-	cudaFree(A_device);
-	cudaFree(g_mapping_device);
-	cudaFree(b_device);
-    cudaFree(c_mapping_device);
-		
-	//apply dirichlet boundary conditions	
-	
-	for(int i=0;i<node_count;i++)
-		if(		(nodes_x[i]==0) ||(nodes_x[i]==size_x) || (nodes_y[i]==0) || (nodes_y[i]==size_y))
-		{
-			for(int j=0;j<node_count; j++)
-			{
-				b[j]-=g*A[i+j*node_count];
-				A[i+j*node_count]=0;
-				A[j+i*node_count]=0;
-			}
-			A[i+i*node_count]=1;
-			b[i]=g;
-		}
-		
-
-		
-	for(int i=0;i<node_count;i++	)
-		cout << b[i] << endl;
-
-	cout <<"----------------------" << endl;
-	//solve Ax=b with CG method
-	/*next step apply cuda matrix vector product kernels to accelerate CG method*/
-
-	//allocating necessary memory for CG-method
-	
-	double* x =new double[node_count];
-	double* Ax =new double[node_count];
-	double* Ap =new double[node_count];
-	double* r =new double[node_count];
-	double* p =new double[node_count];
-	double sum, norm, alpha, beta, eps;
-	int iter_max=(N_x+1)*(N_y+1);
-
-	eps=1.0e-15;
-		//initialize starting vector
-		for(int i=0;i<node_count;i++)
-			x[i]=0.0;
-
-	for(int j=0;j<node_count;j++){
-		sum=0;
-		for(int i=0;i<node_count;i++)
-			sum+=A[i+j*node_count]*x[i];
-		Ax[j]=sum;
-	}
-
-	for(int i=0; i<node_count;i++){
-		r[i]=b[i]-Ax[i];
-		p[i]=r[i];
-	}
-
-	for(int k=0;k<iter_max;k++){
-
-		for(int j=0;j<node_count;j++){
-			sum=0;
-		for(int i=0;i<node_count;i++)
-			sum+=A[i+j*node_count]*p[i];
-		Ap[j]=sum;
-	}
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=p[i]*Ap[i];
-		norm=sum;
-
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=r[i]*p[i];
-
-		alpha= sum/norm;
-		for(int i=0; i<node_count;i++){
-			x[i]=x[i]+alpha*p[i];
-			r[i]=r[i]-alpha*Ap[i];
-		}
-
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=r[i]*Ap[i];
-		beta=sum/norm;
-
-		for(int i=0; i<node_count;i++)
-			p[i]=r[i]-beta*p[i];
-		if(norm<eps)
-			k=iter_max;
-		//print Norm to console every iteration
-		cout << k << " Norm: " << norm << endl;
-	}
-	
-	//matrix output
-	
-	/*cout.precision(3);
-	for(int j=0;j<node_count;j++){			
-			for(int i=0;i<node_count;i++){			 
-				cout << A[i+j*node_count]<< "|";
-			}
-			cout << endl;			
-		}
-		*/
-	ofstream Filematrix("matrix.txt");
-	Filematrix << "{";
-	for(int j=0;j<node_count;j++)
-	{
-		Filematrix << "{";
-		for(int i=0;i<node_count-1;i++)		
-			Filematrix <<A[i+j*(node_count)] << "," ;
-		Filematrix <<A[node_count-1+j*(node_count)];
-		Filematrix << "}";
-		if(j!=node_count-1)
-			Filematrix << ",";		
-	}
-	Filematrix << "}";
-	Filematrix.close();
-
-	
-	//create file output of the solution vector
-	stringstream fnAssembly;
-
-	string Filename="";
-	
-	fnAssembly << "output" << N_x <<"_" << N_y<< ".txt";
-	fnAssembly >> Filename;
-	ofstream File(Filename);
-	File << "{";
-	for(int j=0;j<N_y+1;j++)
-	{
-		File << "{";
-		for(int i=0;i<N_x;i++)		
-			File <<x[i+j*(N_x+1)] << "," ;
-		File <<x[N_x+j*(N_x+1)];
-		File << "}";
-		if(j!=N_y)
-			File << ",";		
-	}
-	File << "}";
-	File.close();
-	
-	//CODE
-	double test;
-	//cin >> test ;
-	free(A);
-	free(b);
-	free(nodes_x);
-	free(nodes_y);
-	free(elements);
-	free(x);
-	free(Ax);
-	free(Ap);
-	free(r);
-	free(p);
-	free(c_mapping);
-
-}
 
 //works as intended maybe modify to overload and print int and doubles in one routine
 void printMatrix(double* A, int n, int m)
@@ -609,6 +420,7 @@ void testMatrixSym(double* A, int n, int m)
 	}
 	cout <<"Ist symmetrisch"<< endl;		
 }
+
  
 int main()
 {
@@ -624,6 +436,10 @@ int main()
 	int ElementCount=elementsX*elementsY;
 	int PointsPerElement=(degree+1)*(degree+1);
 	int*elements=NULL;
+	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
+	cusparseHandle_t handle=0;
+	cusparseStatus_t status;
+	double *LoadVector=NULL;
 
 	/*allocation of necessary host memory*/
 	double *coordinatesX= new double[ElementCount*PointsPerElement];
@@ -631,7 +447,8 @@ int main()
 
 	/*allocation of necessary device memory*/
 	double	*coo_values_device;
-	coordinates		*coo_index_device;
+	int		*coo_row_device;
+	int		*coo_col_device;
 	int		*elements_device;
 	double	*M_device;
 	double	*M_m_device;
@@ -640,11 +457,13 @@ int main()
 	dim3 dimBlock(elementsX*elementsY,1,1);
 	dim3 dimBlockM(degree+1,degree+1,1);
 	dim3 dimBlockM_m(degree,degree,1);
+	
 	cudaMalloc((void**)&coo_values_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(double));
 	cudaMalloc((void**)&M_device, (degree+1)*(degree+1)*sizeof(double));
 	cudaMalloc((void**)&M_m_device, degree*degree*sizeof(double));
 	cudaMalloc((void**)&elements_device, ElementCount*PointsPerElement*sizeof(int));
-	cudaMalloc((void**)&coo_index_device, ElementCount*PointsPerElement*sizeof(int)*2);
+	cudaMalloc((void**)&coo_row_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int));
+	cudaMalloc((void**)&coo_col_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int));
 
 	
 	/*create triangulation for the simulation*/
@@ -663,27 +482,79 @@ int main()
 	BernBinomCoeff<<<dimGrid, dimBlockM_m>>>(M_m_device, degree-1);
 	
 
-	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_index_device,coo_values_device,degree, elements_device, M_device, M_m_device);
+	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_row_device, coo_col_device, coo_values_device,degree, elements_device, M_device, M_m_device);
+
+	/* convert coo output into crs format*/
+	//copy COO dataset from device to host
+	double *coo_values = new double[ElementCount*PointsPerElement*PointsPerElement];
+	int *coo_row = new int[ElementCount*PointsPerElement*PointsPerElement];
+	int *coo_col = new int[ElementCount*PointsPerElement*PointsPerElement];
+
+	cudaMemcpy(coo_values,coo_values_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(coo_row,coo_row_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(coo_col,coo_col_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int), cudaMemcpyDeviceToHost);
+
+	cudaFree(coo_values_device);
+	cudaFree(coo_row_device);
+	cudaFree(coo_col_device);
+
+
+	SortCOO(coo_values, coo_row, coo_col,PointsPerElement,ElementCount);
+	int zeroEntries=reduceCOO(coo_values,coo_row,coo_col,PointsPerElement,ElementCount);
+
+	//allocating necessary sparse dataset memory
+
+	int *csrRowPtr=0;
+	double *csr_data_device;
+	cudaMalloc((void**)&csrRowPtr, (pointCount+1)*sizeof(csrRowPtr[0]));
+	cudaMalloc((void**)&csr_data_device, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(double));
+	cudaMalloc((void**)&coo_row_device, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int));
+	
+	//copy data back to device memory
+	cudaMemcpy(csr_data_device,coo_values, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(coo_row_device,coo_row, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int), cudaMemcpyHostToDevice);
+
+	/*initialize cusparse library*/
+	status=cusparseCreate(&handle);
+	if(status!=CUSPARSE_STATUS_SUCCESS)
+		cout << "CUSPARSE Library initialization failed" << endl;
+
+	//convert to CSR format
+	status=cusparseXcoo2csr(handle, coo_row_device,ElementCount*PointsPerElement*PointsPerElement-zeroEntries,pointCount,csrRowPtr,CUSPARSE_INDEX_BASE_ZERO);
+	if(status!=CUSPARSE_STATUS_SUCCESS)
+		cout << "Conversion from COO to CSR format failed" << endl;
 
 	/*assemble load vector*/
+	//assuming for the time beeing f=0
+	dim3 dimGridL(pointCount/256,1,1);
+	dim3 dimBlockL(256,1,1);
+	double* LoadVector_device;
+	cudaMalloc((void**)&LoadVector_device,pointCount*sizeof(double));
+	fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount, 0.0);
+	//LoadVector = assembleLoadVector(a,b,degree, elements, elementsX, elementsY, coordinatesX, coordinatesY,pointCount);
 
 	/*apply dirichlet boundary conditions*/
 
-	/* convert coo output into crs format*/
+	//find upper boundary nodes, set them to v
+	//find lower,left, right boundary nodes, set them to 0
 
 	/*solve system of equations*/
 
 	/*write solution into file*/
 
-	double *coo_values = new double[ElementCount*PointsPerElement*PointsPerElement];
-	cudaMemcpy(coo_values,coo_values_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(double), cudaMemcpyDeviceToHost);
-	printMatrix(coo_values, (degree+1)*( degree+1),(degree+1)*( degree+1));
 
-	testMatrixSym(coo_values,(degree+1)*(degree+1),(degree+1)*(degree+1));
+	
+	
 
+	
+
+	for(int i=0; i<ElementCount*PointsPerElement*PointsPerElement; i++)
+		cout << coo_row[i] << "  |  " << coo_col[i] << "  |  " << coo_values[i] << endl;
+	
+	
+	
 	/*free memory*/
-	cudaFree(coo_values_device);
-	cudaFree(coo_index_device);
+
 	cudaFree(elements_device);
 	cudaFree(M_device);
 	cudaFree(M_m_device);

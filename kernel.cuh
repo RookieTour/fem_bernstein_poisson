@@ -4,6 +4,6 @@
 struct coordinates;
 	
 __global__ void BernBinomCoeff(double *M, int n);
-__global__ void ass_A_exact(double a, double b, coordinates *coo_index, double*coo_value,int degree, int *elements, double *M, double *M_m);
-
+__global__ void ass_A_exact(double a, double b, int *coo_row_device,int *coo_col_device, double*coo_value,int degree, int *elements, double *M, double *M_m);
+__global__ void fillArray(double* array, int size, double value);
 #endif

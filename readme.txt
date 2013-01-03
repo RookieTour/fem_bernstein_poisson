@@ -1,4 +1,12 @@
 first iteration of a finite element simulation on a rectangle
-using first degree bernstein polynomials and 2x2 gaussiand quadrature to compute necessary integrals on CUDA
 
-makefile has yet to be tested
+using arbitary degree bernstein polynomials and analytical integration for computation of stiffnes matrix factors
+
+makefile has yet to be tested *missing include of cusparse library*
+
+to do:
+- include dirichlet boundary conditions apliance fpr CSR type matrix
+
+- solve system of ecquations with C method using cuspars matrix-vector / vector-vector product
+
+- sort output vector
