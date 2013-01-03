@@ -7,6 +7,6 @@ makefile has yet to be tested *missing include of cusparse library*
 to do:
 - include dirichlet boundary conditions apliance fpr CSR type matrix
 
-- solve system of ecquations with C method using cuspars matrix-vector / vector-vector product
+- solve system of ecquations with CG-method using cusparse matrix-vector / vector-vector product
 
 - sort output vector
