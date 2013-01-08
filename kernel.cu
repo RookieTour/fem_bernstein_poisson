@@ -1,17 +1,64 @@
 ﻿#include<cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-
+#include <stdio.h>
+#include <stdlib.h>
+#include <cstdlib>
+#include <iostream>
+#include <sstream>
 
 __global__ void fillArray(double* array, int size, double value)
 { 
 	int i=threadIdx.x+blockIdx.x*blockDim.x;
-
-	if(i<size)
+	
+	if(i<size){		
 		array[i]=value;
+	}
+	
+		
 
 }
 
+
+__global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode, int entries, int elementsX, int elementsY, int degree, double boundaryValue)
+{ 
+	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	int row=0;
+	int col;
+	int ucindex;
+	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+
+	
+
+	if(i<entries)
+	{
+		//printf("i: %i, isborder: %i \n", i,isboundaryNode[col]);
+		col=csr_col_device[i]; //spalte der großen matrix aber
+		while((row<=pointCount) && (csrRowPtr[row]<=i))
+		{		
+			row++;
+		}
+		row--;
+		
+		
+		if(isboundaryNode[col]==1){			
+			if(col!=row)
+				csr_matrix[i]=0;
+			else
+			{
+				//printf(" col : %i\n", col);
+				csr_matrix[i]=1;		
+				load[col]=boundaryValue; 
+			}
+			
+			
+		}
+
+	// für jeden index i,jh in csr schaue ob i=j und i boundaryNode[i]=1 dann csr[i][j]=1 sonst wenn i!=j und i in boundary node dann csr[i][]=0
+	}
+
+		
+}
 __global__ void BernBinomCoeff(double *M, int n)
 {
 	 int i= threadIdx.x;
@@ -45,6 +92,9 @@ __global__ void BernBinomCoeff(double *M, int n)
 	
 	
 	M[i+j*(n+1)]=(double)(top_0*top_1)/bottom;
+
+	
+		
 
 	
 }
@@ -118,4 +168,6 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 
 		
 	free(B);
+	
+		
 }

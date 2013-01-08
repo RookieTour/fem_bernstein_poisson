@@ -5,15 +5,146 @@
 #include <sstream>
 #include <fstream>
 #include <cuda.h>
+#include "helper_functions.h"  // helper for shared functions common to CUDA SDK samples
+#include "helper_cuda.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "kernel.cuh"
-#include "cusparse.h"
+//#include "cusparse.h"
+#include <cusparse_v2.h>
+#include <cublas_v2.h>
 
 #define _USE_MATH_DEFINES
 #include <math.h>
 using namespace std;
 
+int checkcublasStatus ( cublasStatus_t status, const char *msg ) 
+{
+    if ( status != CUBLAS_STATUS_SUCCESS ) {
+        fprintf (stderr, "!!!! CUBLAS %s ERROR \n", msg);
+        return 1;
+    }
+    return 0;
+}
+
+/* checkCusparseStatus: concise method for verifying cusparse return status */
+int checkCusparseStatus ( cusparseStatus_t status, const char *msg )
+{
+    if ( status != CUSPARSE_STATUS_SUCCESS ) {
+        fprintf (stderr, "!!!! CUSPARSE %s ERROR \n", msg);
+        return 1;
+    }
+    return 0;
+}
+
+double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int N){
+	
+	const int max_iter =10000;
+	int k;
+	double tol=1e-15;
+	double *d_x, *d_p, *d_Ax;
+	double a, b, na, r0, r1,dot;
+	double *x =new double[N];
+
+	 for (int i = 0; i < N; i++) {
+      
+        x[i] =0;
+    }
+
+	  /* Get handle to the CUBLAS context */
+    cublasHandle_t cublasHandle = 0;
+    cublasStatus_t cublasStatus;
+    cublasStatus = cublasCreate(&cublasHandle);
+    if ( checkcublasStatus (cublasStatus, "!!!! CUBLAS initialization error\n") )
+		printf("EXIT_FAILURE");
+
+    /* Get handle to the CUSPARSE context */
+    cusparseHandle_t cusparseHandle = 0;
+    cusparseStatus_t cusparseStatus;
+    cusparseStatus = cusparseCreate(&cusparseHandle);
+    if ( checkCusparseStatus (cusparseStatus, "!!!! CUSPARSE initialization error\n") ) printf("EXIT_FAILURE");
+
+    cusparseMatDescr_t descr = 0;
+    cusparseStatus = cusparseCreateMatDescr(&descr); 
+    if ( checkCusparseStatus (cusparseStatus, "!!!! CUSPARSE cusparseCreateMatDescr error\n") ) printf("EXIT_FAILURE");
+
+    cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
+    
+    int test;
+	cin>> test ;
+	
+
+    checkCudaErrors( cudaMalloc((void**)&d_x, N*sizeof(double)) );  
+    //checkCudaErrors( cudaMalloc((void**)&d_r, N*sizeof(double)) );
+    checkCudaErrors( cudaMalloc((void**)&d_p, N*sizeof(double)) );
+    checkCudaErrors( cudaMalloc((void**)&d_Ax, N*sizeof(double)) );
+
+
+
+    cudaMemcpy(d_x, x, N*sizeof(double), cudaMemcpyHostToDevice);
+
+
+    double alpha = 1.0;
+    double alpham1 = -1.0;
+    double beta = 0.0;
+	r0 = 0.;
+
+    cusparseStatus= cusparseDcsrmv(cusparseHandle,CUSPARSE_OPERATION_NON_TRANSPOSE, N, N, nz, &alpha, descr, d_val, d_row, d_col, d_x, &beta, d_Ax);
+	
+	cublasDaxpy(cublasHandle, N, &alpham1, d_Ax, 1, d_r, 1);
+
+	
+    cublasStatus = cublasDdot(cublasHandle, N, d_r, 1, d_r, 1, &r1);
+	
+	
+    k = 1;
+    while (r1 > tol*tol && k <= max_iter) {
+        if (k > 1) {
+            b = r1 / r0;
+            cublasStatus = cublasDscal(cublasHandle, N, &b, d_p, 1);
+            cublasStatus = cublasDaxpy(cublasHandle, N, &alpha, d_r, 1, d_p, 1);
+        } else {
+	    cublasStatus = cublasDcopy(cublasHandle, N, d_r, 1, d_p, 1);
+        }
+
+        cusparseDcsrmv(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, N, N, nz, &alpha, descr, d_val, d_row, d_col, d_p, &beta, d_Ax);
+	
+
+
+        cublasStatus = cublasDdot(cublasHandle, N, d_p, 1, d_Ax, 1, &dot);
+	a = r1 / dot;
+		
+        cublasStatus = cublasDaxpy(cublasHandle, N, &a, d_p, 1, d_x, 1);
+
+		
+	na = -a;
+        cublasStatus = cublasDaxpy(cublasHandle, N, &na, d_Ax, 1, d_r, 1);
+
+        r0 = r1;
+		
+        cublasStatus = cublasDdot(cublasHandle, N, d_r, 1, d_r, 1, &r1);
+        cudaThreadSynchronize();
+        printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
+        k++;
+    }
+
+    cudaMemcpy(x, d_x, N*sizeof(double), cudaMemcpyDeviceToHost);
+
+ 
+    cusparseDestroy(cusparseHandle);
+    cublasDestroy(cublasHandle);
+
+    cudaFree(d_col);
+    cudaFree(d_row);
+    cudaFree(d_val);
+    cudaFree(d_x);
+    cudaFree(d_r);
+    cudaFree(d_p);
+    cudaFree(d_Ax);
+
+	return x;
+	}
 
 
 void quickSort(double *arr,int *index_i, int *index_j, int left, int right) {
@@ -219,8 +350,11 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 int* determineBorders(int elementsX, int elementsY, int degree)
 {
 	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
-
+	
 	int *boundaryNodes= new int[pointCount];
+
+	for(int i=0; i<pointCount;i++)
+		boundaryNodes[i]=0;
 
 	/*			1		*/
 	/*	-------------	*/
@@ -234,27 +368,52 @@ int* determineBorders(int elementsX, int elementsY, int degree)
 	//lower border (0)
 		//Vertex Nodes
 			//0 ... elementsX
+			for(int i=0;i<=elementsX;i++)
+				boundaryNodes[i]=1;
+	
 		//Side Nodes
+			if(degree>1){
 			//(elementsX+1)*(elementsY+1) ...(elementsX+1)*(elementsY+1) +elementsX*(degree-1)-1
-		
+				for(int i=(elementsX+1)*(elementsY+1);i<=(elementsX+1)*(elementsY+1) +elementsX*(degree-1)-1;i++)
+					boundaryNodes[i]=1;
+			}
 	//upper border (1)
 		//Vertex Nodes
 			//(elementsX+1)*elementsY...(elementsX+1)*(elementsY+1)-1
+			for(int i=(elementsX+1)*elementsY;i<=(elementsX+1)*(elementsY+1)-1;i++)
+				boundaryNodes[i]=1;
 		//Side Nodes
-			//pointCount -elementsX*(degree-1)...pointCount-1
+			if(degree>1){
+				//pointCount -elementsX*(degree-1)...pointCount-1
+			for(int i=pointCount -elementsX*(degree-1);i<=pointCount-1;i++)
+				boundaryNodes[i]=1;
+			}
 
 	//left border (2)
 		//Vertex Nodes
 			//i*(elementsX+1) (0<=i<=elementsY)
+			for(int i=0; i<=elementsY;i++)
+				boundaryNodes[i*(elementsX+1)]=1;
+			
 		//Side Nodes
 			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
-
+		if(degree>1){
+			for(int i=0;i<=(degree-1)*elementsY;i++)
+				boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=1;			
+		}
 	//right border (3)
 		//Vertex Nodes
 			//i*(elementsX+1)+elementsX (0<=i<=elementsY)
+			for(int i=0;i<=elementsY;i++)
+				boundaryNodes[i*(elementsX+1)+elementsX]=1;
+			
 	//Side Nodes
+			if(degree>1){
 			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
-
+				for(int i=0;i<(degree-1)*elementsY;i++)
+					boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=1;
+			}
+			return boundaryNodes;
 }
 //has yet to be tested
 double* assembleLoadVector(double a, double b, int degree, int *elements, int elementsX, int elementsY, double *nodes_x, double *nodes_y, int pointCount)
@@ -285,93 +444,6 @@ double* assembleLoadVector(double a, double b, int degree, int *elements, int el
 		
 	}
 	return load;
-}
-
-//has yet to be tested
-void CGmethodSolve(double* A, double*b,int degree, int elementsX, int elementsY, double *x)
-{
-
-	int node_count=(elementsX+1+(degree-1)*elementsX)*(elementsY+1+(degree-1)*elementsY);
-	double* Ax =new double[node_count];
-	double* Ap =new double[node_count];
-	double* r =new double[node_count];
-	double* p =new double[node_count];
-	double sum, norm, alpha, beta, eps;
-	int iter_max=node_count;
-
-	eps=1.0e-15;
-
-		//initialize starting vector
-		for(int i=0;i<node_count;i++)
-			x[i]=0.0;
-
-	for(int j=0;j<node_count;j++){
-		sum=0;
-		for(int i=0;i<node_count;i++)
-			sum+=A[i+j*node_count]*x[i];
-		Ax[j]=sum;
-	}
-
-	for(int i=0; i<node_count;i++){
-		r[i]=b[i]-Ax[i];
-		p[i]=r[i];
-	}
-
-	for(int k=0;k<iter_max;k++){
-
-		for(int j=0;j<node_count;j++){
-			sum=0;
-		for(int i=0;i<node_count;i++)
-			sum+=A[i+j*node_count]*p[i];
-		Ap[j]=sum;
-	}
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=p[i]*Ap[i];
-		norm=sum;
-
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=r[i]*p[i];
-
-		alpha= sum/norm;
-		for(int i=0; i<node_count;i++){
-			x[i]=x[i]+alpha*p[i];
-			r[i]=r[i]-alpha*Ap[i];
-		}
-
-		sum=0;
-		for(int i=0; i<node_count;i++)
-			sum+=r[i]*Ap[i];
-		beta=sum/norm;
-
-		for(int i=0; i<node_count;i++)
-			p[i]=r[i]-beta*p[i];
-		if(norm<eps)
-			k=iter_max;
-		//print Norm to console every iteration
-		cout << k << " Norm: " << norm << endl;
-	}
-}
-
-//has yet to be tested
-void applyDirichlet(double* A, int degree, int elementsX, int elementsY,double g, double *load, double *nodes_x, double *nodes_y, double size_x, double size_y)
-{
-		int node_count=(elementsX+1+(degree-1)*elementsX)*(elementsY+1+(degree-1)*elementsY);
-
-		for(int i=0;i<node_count;i++)
-		if(		(nodes_x[i]==0) ||(nodes_x[i]==size_x) || (nodes_y[i]==0) || (nodes_y[i]==size_y))
-		{
-			for(int j=0;j<node_count; j++)
-			{
-				load[j]-=g*A[i+j*node_count];
-				A[i+j*node_count]=0;
-				A[j+i*node_count]=0;
-			}
-			A[i+i*node_count]=1;
-			load[i]=g;
-		}
-		
 }
 
 
@@ -421,25 +493,28 @@ void testMatrixSym(double* A, int n, int m)
 	cout <<"Ist symmetrisch"<< endl;		
 }
 
+
  
 int main()
 {
 	/*Simulation Variables*/
 	int degree=1;	
-	int elementsX=4;
-	int elementsY=2;
-	double sizeX=4.0;
-	double sizeY=2.0;
+	int elementsX=50;
+	int elementsY=50;
+	double sizeX=1.0;
+	double sizeY=1.0;
 	
 
 	/*variables necessary for computation*/
 	int ElementCount=elementsX*elementsY;
 	int PointsPerElement=(degree+1)*(degree+1);
-	int*elements=NULL;
-	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
+	int *elements=NULL;
+	int *boundaryNodes=NULL;
+	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+	
 	cusparseHandle_t handle=0;
 	cusparseStatus_t status;
-	double *LoadVector=NULL;
+	double *LoadVector= new double[pointCount+1];
 
 	/*allocation of necessary host memory*/
 	double *coordinatesX= new double[ElementCount*PointsPerElement];
@@ -464,21 +539,21 @@ int main()
 	cudaMalloc((void**)&elements_device, ElementCount*PointsPerElement*sizeof(int));
 	cudaMalloc((void**)&coo_row_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int));
 	cudaMalloc((void**)&coo_col_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int));
-
+	
 	
 	/*create triangulation for the simulation*/
 	elements=createTriangulation(coordinatesX,coordinatesY,degree,elementsX,elementsY,sizeX,sizeY);
+	boundaryNodes=determineBorders(elementsX, elementsY, degree);
 	
 	/*copy necessarry memory to device*/	
 	cudaMemcpy(elements_device,elements, ElementCount*PointsPerElement*sizeof(int), cudaMemcpyHostToDevice);
 
 
-
+	
 	/*assemble system matrix*/
 	double a=sizeX/elementsX;
 	double b=sizeY/elementsY;
 	BernBinomCoeff<<<dimGrid, dimBlockM>>>(M_device, degree);
-
 	BernBinomCoeff<<<dimGrid, dimBlockM_m>>>(M_m_device, degree-1);
 	
 
@@ -506,13 +581,17 @@ int main()
 
 	int *csrRowPtr=0;
 	double *csr_data_device;
-	cudaMalloc((void**)&csrRowPtr, (pointCount+1)*sizeof(csrRowPtr[0]));
+	int *csr_col_device;
+	
+	cudaMalloc((void**)&csr_col_device, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int));
+	cudaMalloc((void**)&csrRowPtr, (pointCount+2)*sizeof(csrRowPtr[0]));
 	cudaMalloc((void**)&csr_data_device, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(double));
 	cudaMalloc((void**)&coo_row_device, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int));
 	
 	//copy data back to device memory
 	cudaMemcpy(csr_data_device,coo_values, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(coo_row_device,coo_row, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy(csr_col_device,coo_col, (ElementCount*PointsPerElement*PointsPerElement-zeroEntries)*sizeof(int), cudaMemcpyHostToDevice);
 
 	/*initialize cusparse library*/
 	status=cusparseCreate(&handle);
@@ -520,35 +599,64 @@ int main()
 		cout << "CUSPARSE Library initialization failed" << endl;
 
 	//convert to CSR format
-	status=cusparseXcoo2csr(handle, coo_row_device,ElementCount*PointsPerElement*PointsPerElement-zeroEntries,pointCount,csrRowPtr,CUSPARSE_INDEX_BASE_ZERO);
+	status=cusparseXcoo2csr(handle, coo_row_device,ElementCount*PointsPerElement*PointsPerElement-zeroEntries,pointCount+1,csrRowPtr,CUSPARSE_INDEX_BASE_ZERO);
 	if(status!=CUSPARSE_STATUS_SUCCESS)
 		cout << "Conversion from COO to CSR format failed" << endl;
-
+	// csr_data_device , csrRowPtr, csr_col_device
 	/*assemble load vector*/
 	//assuming for the time beeing f=0
-	dim3 dimGridL(pointCount/256,1,1);
+
+	 
+
+	dim3 dimGridL(1+pointCount/256,1,1);
 	dim3 dimBlockL(256,1,1);
 	double* LoadVector_device;
-	cudaMalloc((void**)&LoadVector_device,pointCount*sizeof(double));
-	fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount, 0.0);
-	//LoadVector = assembleLoadVector(a,b,degree, elements, elementsX, elementsY, coordinatesX, coordinatesY,pointCount);
 
+	cudaMalloc((void**)&LoadVector_device,(pointCount+1)*sizeof(double));
+	fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount+1, 0.0);
+	
+
+	
 	/*apply dirichlet boundary conditions*/
+	int *boundaryNodes_device;
+	int nz=ElementCount*PointsPerElement*PointsPerElement-zeroEntries;
 
+
+	cudaMalloc((void**)&boundaryNodes_device,(pointCount+1)*sizeof(int));
+	cudaMemcpy(boundaryNodes_device,boundaryNodes,(pointCount+1)*sizeof(int),cudaMemcpyHostToDevice);
+
+	applyDirichlet<<<dimGridL,dimBlockL>>>(LoadVector_device, csr_data_device,csr_col_device,csrRowPtr,boundaryNodes_device, ElementCount*PointsPerElement*PointsPerElement-zeroEntries, elementsX, elementsY, degree, 1.0);
+	
+	int *row_index = new int[pointCount+2];
+	int *col_index = new int[nz];
+	cudaMemcpy(coo_values,csr_data_device,(nz)*sizeof(double), cudaMemcpyDeviceToHost);
+	cudaMemcpy(row_index,csrRowPtr,(pointCount+2)*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(col_index,csr_col_device,(nz)*sizeof(int), cudaMemcpyDeviceToHost);
+
+	/*printf("values:\n");
+	printMatrix(coo_values,nz,1);
+	printf("row:\n");
+	printMatrix_int(row_index,pointCount+2,1);
+	printf("col:\n");
+	printMatrix_int(col_index,nz,1);
 	//find upper boundary nodes, set them to v
 	//find lower,left, right boundary nodes, set them to 0
 
+	
+	
+	
 	/*solve system of equations*/
+	double *x=CGsolve(csr_data_device,csr_col_device,csrRowPtr, LoadVector_device,nz,pointCount+1);
 
 	/*write solution into file*/
 
 
 	
-	
+
 
 	
 
-	for(int i=0; i<ElementCount*PointsPerElement*PointsPerElement; i++)
+	/*for(int i=0; i<ElementCount*PointsPerElement*PointsPerElement; i++)
 		cout << coo_row[i] << "  |  " << coo_col[i] << "  |  " << coo_values[i] << endl;
 	
 	
@@ -571,6 +679,30 @@ int main()
 		printMatrix(&coordinatesX[k*(degree+1)*(degree+1)],degree+1,degree+1);
 		cout << endl;
 	}*/
+	cout << "Punkte gesamt:" << nz <<endl;
+
+	stringstream fnAssembly;
+
+	string Filename="";
+
+	fnAssembly << "output" << elementsX <<"_" << elementsY<< ".txt";
+	fnAssembly >> Filename;
+	ofstream File(Filename);
+	File << "{";
+	for(int j=0;j<elementsY+1;j++)
+	{
+		File << "{";
+		for(int i=0;i<elementsX;i++)		
+			File <<x[i+j*(elementsX+1)] << "," ;
+		File <<x[elementsX+j*(elementsX+1)];
+		File << "}";
+		if(j!=elementsY)
+			File << ",";		
+	}
+	File << "}";
+	File.close();
+
+
 	double test;
 	cin >>test;
     return 0;
