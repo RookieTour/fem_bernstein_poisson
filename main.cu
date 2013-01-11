@@ -71,10 +71,6 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
     cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
     cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
     
-    int test;
-	cin>> test ;
-	
-
     checkCudaErrors( cudaMalloc((void**)&d_x, N*sizeof(double)) );  
     //checkCudaErrors( cudaMalloc((void**)&d_r, N*sizeof(double)) );
     checkCudaErrors( cudaMalloc((void**)&d_p, N*sizeof(double)) );
@@ -144,6 +140,27 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
     cudaFree(d_Ax);
 
 	return x;
+	}
+
+void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N){
+		int k=0;
+		int m, n;
+		m=N;
+		n=N;
+		cout.precision(3);
+	for(int j=0;j<m;j++){			
+			for(int i=0;i<n;i++){
+				if((i==csr_col[k]) &&(csr_row[j]<=k)){
+					cout << csr_values[k] << "|";
+					k++;
+				}
+
+				else
+					cout << "0" << "|";
+			}
+			cout << endl;			
+		}
+
 	}
 
 
@@ -356,16 +373,43 @@ int* determineBorders(int elementsX, int elementsY, int degree)
 	for(int i=0; i<pointCount;i++)
 		boundaryNodes[i]=0;
 
-	/*			1		*/
+	/*			2		*/
 	/*	-------------	*/
 	/*	|			|	*/
 	/* 	|			|	*/
-	/*2 |			| 3	*/
+	/*4 |			| 3	*/
 	/*	|			|	*/
 	/*	-------------	*/
-	/*			0		*/
+	/*			1		*/
 
-	//lower border (0)
+
+
+	//left border (3)
+		//Vertex Nodes
+			//i*(elementsX+1) (0<=i<=elementsY)
+			for(int i=0; i<=elementsY;i++)
+				boundaryNodes[i*(elementsX+1)]=3;
+			
+		//Side Nodes
+			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
+		if(degree>1){
+			for(int i=0;i<=(degree-1)*elementsY;i++)
+				boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=3;			
+		}
+	//right border (4)
+		//Vertex Nodes
+			//i*(elementsX+1)+elementsX (0<=i<=elementsY)
+			for(int i=0;i<=elementsY;i++)
+				boundaryNodes[i*(elementsX+1)+elementsX]=4;
+			
+	//Side Nodes
+			if(degree>1){
+			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
+				for(int i=0;i<(degree-1)*elementsY;i++)
+					boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=4;
+			}
+
+				//lower border (1)
 		//Vertex Nodes
 			//0 ... elementsX
 			for(int i=0;i<=elementsX;i++)
@@ -377,41 +421,16 @@ int* determineBorders(int elementsX, int elementsY, int degree)
 				for(int i=(elementsX+1)*(elementsY+1);i<=(elementsX+1)*(elementsY+1) +elementsX*(degree-1)-1;i++)
 					boundaryNodes[i]=1;
 			}
-	//upper border (1)
+	//upper border (2)
 		//Vertex Nodes
 			//(elementsX+1)*elementsY...(elementsX+1)*(elementsY+1)-1
 			for(int i=(elementsX+1)*elementsY;i<=(elementsX+1)*(elementsY+1)-1;i++)
-				boundaryNodes[i]=1;
+				boundaryNodes[i]=2;
 		//Side Nodes
 			if(degree>1){
 				//pointCount -elementsX*(degree-1)...pointCount-1
 			for(int i=pointCount -elementsX*(degree-1);i<=pointCount-1;i++)
-				boundaryNodes[i]=1;
-			}
-
-	//left border (2)
-		//Vertex Nodes
-			//i*(elementsX+1) (0<=i<=elementsY)
-			for(int i=0; i<=elementsY;i++)
-				boundaryNodes[i*(elementsX+1)]=1;
-			
-		//Side Nodes
-			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
-		if(degree>1){
-			for(int i=0;i<=(degree-1)*elementsY;i++)
-				boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=1;			
-		}
-	//right border (3)
-		//Vertex Nodes
-			//i*(elementsX+1)+elementsX (0<=i<=elementsY)
-			for(int i=0;i<=elementsY;i++)
-				boundaryNodes[i*(elementsX+1)+elementsX]=1;
-			
-	//Side Nodes
-			if(degree>1){
-			//(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1)) (0<=i<=(degree-1)*elementsY)
-				for(int i=0;i<(degree-1)*elementsY;i++)
-					boundaryNodes[(elementsX+1)*(elementsY+1) +elementsX*(degree-1)+elementsX*degree+i*(elementsX*(degree-1)+ elementsX+1)+ i/(degree-1)*(elementsX*(degree-1))]=1;
+				boundaryNodes[i]=2;
 			}
 			return boundaryNodes;
 }
@@ -499,8 +518,8 @@ int main()
 {
 	/*Simulation Variables*/
 	int degree=1;	
-	int elementsX=50;
-	int elementsY=50;
+	int elementsX=10;
+	int elementsY=10;
 	double sizeX=1.0;
 	double sizeY=1.0;
 	
@@ -528,8 +547,10 @@ int main()
 	double	*M_device;
 	double	*M_m_device;
 
-	dim3 dimGrid(1,1,1);
-	dim3 dimBlock(elementsX*elementsY,1,1);
+
+	dim3 dimGrid(1+(elementsX*elementsY)/256,1,1);
+	dim3 dimBlock(256,1,1);
+	dim3 dimGridM(1,1,1);
 	dim3 dimBlockM(degree+1,degree+1,1);
 	dim3 dimBlockM_m(degree,degree,1);
 	
@@ -544,7 +565,8 @@ int main()
 	/*create triangulation for the simulation*/
 	elements=createTriangulation(coordinatesX,coordinatesY,degree,elementsX,elementsY,sizeX,sizeY);
 	boundaryNodes=determineBorders(elementsX, elementsY, degree);
-	
+	printf("boundary  nodes \n");
+	printMatrix_int(boundaryNodes,8,8);
 	/*copy necessarry memory to device*/	
 	cudaMemcpy(elements_device,elements, ElementCount*PointsPerElement*sizeof(int), cudaMemcpyHostToDevice);
 
@@ -553,11 +575,11 @@ int main()
 	/*assemble system matrix*/
 	double a=sizeX/elementsX;
 	double b=sizeY/elementsY;
-	BernBinomCoeff<<<dimGrid, dimBlockM>>>(M_device, degree);
-	BernBinomCoeff<<<dimGrid, dimBlockM_m>>>(M_m_device, degree-1);
+	BernBinomCoeff<<<dimGridM, dimBlockM>>>(M_device, degree);
+	BernBinomCoeff<<<dimGridM, dimBlockM_m>>>(M_m_device, degree-1);
 	
 
-	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_row_device, coo_col_device, coo_values_device,degree, elements_device, M_device, M_m_device);
+	ass_A_exact<<<dimGrid, dimBlock>>>(a,b,coo_row_device, coo_col_device, coo_values_device,degree, elements_device, M_device, M_m_device,elementsX, elementsY);
 
 	/* convert coo output into crs format*/
 	//copy COO dataset from device to host
@@ -573,10 +595,13 @@ int main()
 	cudaFree(coo_row_device);
 	cudaFree(coo_col_device);
 
+	
 
 	SortCOO(coo_values, coo_row, coo_col,PointsPerElement,ElementCount);
 	int zeroEntries=reduceCOO(coo_values,coo_row,coo_col,PointsPerElement,ElementCount);
 
+	for(int i=0; i<ElementCount*PointsPerElement*PointsPerElement;i++)
+		printf("i: %i, col: %i\n",i, coo_col[i]);
 	//allocating necessary sparse dataset memory
 
 	int *csrRowPtr=0;
@@ -608,7 +633,7 @@ int main()
 
 	 
 
-	dim3 dimGridL(1+pointCount/256,1,1);
+	dim3 dimGridL(1+((pointCount+1)*(pointCount+1))/256,1,1);
 	dim3 dimBlockL(256,1,1);
 	double* LoadVector_device;
 
@@ -625,20 +650,26 @@ int main()
 	cudaMalloc((void**)&boundaryNodes_device,(pointCount+1)*sizeof(int));
 	cudaMemcpy(boundaryNodes_device,boundaryNodes,(pointCount+1)*sizeof(int),cudaMemcpyHostToDevice);
 
-	applyDirichlet<<<dimGridL,dimBlockL>>>(LoadVector_device, csr_data_device,csr_col_device,csrRowPtr,boundaryNodes_device, ElementCount*PointsPerElement*PointsPerElement-zeroEntries, elementsX, elementsY, degree, 1.0);
+	applyDirichlet<<<dimGridL,dimBlockL>>>(LoadVector_device, csr_data_device,csr_col_device,csrRowPtr,boundaryNodes_device, ElementCount*PointsPerElement*PointsPerElement-zeroEntries, elementsX, elementsY, degree, 2.0);
 	
 	int *row_index = new int[pointCount+2];
 	int *col_index = new int[nz];
+	
 	cudaMemcpy(coo_values,csr_data_device,(nz)*sizeof(double), cudaMemcpyDeviceToHost);
 	cudaMemcpy(row_index,csrRowPtr,(pointCount+2)*sizeof(int), cudaMemcpyDeviceToHost);
 	cudaMemcpy(col_index,csr_col_device,(nz)*sizeof(int), cudaMemcpyDeviceToHost);
-
-	/*printf("values:\n");
-	printMatrix(coo_values,nz,1);
-	printf("row:\n");
-	printMatrix_int(row_index,pointCount+2,1);
-	printf("col:\n");
-	printMatrix_int(col_index,nz,1);
+	cudaMemcpy(LoadVector,LoadVector_device,(pointCount+1)*sizeof(double), cudaMemcpyDeviceToHost);
+	printf("nz: %i\n",nz);
+	printf("pointCount: %i\n",pointCount+1);
+	printf("values:\n");
+	//printMatrix(coo_values,nz,1);
+	//printCSRMatrix(coo_values,col_index,row_index,pointCount+1);
+	//printf("row:\n");
+	//printMatrix_int(row_index,pointCount+2,1);
+	//printf("col:\n");
+	//printMatrix_int(col_index,nz,1);
+	printf("LoadVector:\n");
+	//printMatrix(LoadVector,pointCount+1,1);
 	//find upper boundary nodes, set them to v
 	//find lower,left, right boundary nodes, set them to 0
 
@@ -679,7 +710,8 @@ int main()
 		printMatrix(&coordinatesX[k*(degree+1)*(degree+1)],degree+1,degree+1);
 		cout << endl;
 	}*/
-	cout << "Punkte gesamt:" << nz <<endl;
+	
+	
 
 	stringstream fnAssembly;
 
@@ -701,7 +733,7 @@ int main()
 	}
 	File << "}";
 	File.close();
-
+	
 
 	double test;
 	cin >>test;

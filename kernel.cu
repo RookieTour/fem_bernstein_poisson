@@ -27,13 +27,37 @@ __global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_de
 	int col;
 	int ucindex;
 	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+	double sum=0;
+	double bound[4];
+	bound[0]=1;
+	bound[1]=0;
+	bound[2]=0;
+	bound[3]=0;
+	//if (i>400)
+		//printf("i_device: %i\n",i);
+	if(i<pointCount+1){
+		int start=csrRowPtr[i];
+		int end =csrRowPtr[i+1];
 
-	
+		for(int j=start;j<end;j++)
+		{	
+			if(isboundaryNode[csr_col_device[j]]!=0)
+			{					
+				
+				sum+=bound[isboundaryNode[csr_col_device[j]]-1]*csr_matrix[j];
+			}
+				
+		}
+		load[i]-=sum;
 
+	}
+	__syncthreads();		
 	if(i<entries)
 	{
-		//printf("i: %i, isborder: %i \n", i,isboundaryNode[col]);
+		
 		col=csr_col_device[i]; //spalte der großen matrix aber
+		//printf("i: %i, isborder: %i  col: %i \n ", i,isboundaryNode[col],col);
+		
 		while((row<=pointCount) && (csrRowPtr[row]<=i))
 		{		
 			row++;
@@ -41,14 +65,22 @@ __global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_de
 		row--;
 		
 		
-		if(isboundaryNode[col]==1){			
-			if(col!=row)
+		//__syncthreads();		
+			
+		if((isboundaryNode[col]!=0)||(isboundaryNode[row]!=0)){			
+			if(col!=row){				
 				csr_matrix[i]=0;
-			else
-			{
+
+			}
+		}
+
+		__syncthreads();		
+		if((isboundaryNode[col]!=0)||(isboundaryNode[row]!=0)){
+				if(col==row){
 				//printf(" col : %i\n", col);
-				csr_matrix[i]=1;		
-				load[col]=boundaryValue; 
+				csr_matrix[i]=1;	
+				load[col]=bound[isboundaryNode[col]-1];
+				printf(" Dirichlet auf : %i \n", col);
 			}
 			
 			
@@ -99,7 +131,7 @@ __global__ void BernBinomCoeff(double *M, int n)
 	
 }
 
-__global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_device, double*coo_value,int degree, int *elements, double *M, double *M_m)
+__global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_device, double*coo_value,int degree, int *elements, double *M, double *M_m, int elementsX, int elementsY)
 {
 	double *B;
 	B=(double*)malloc((degree+1)*(degree+1)*(degree+1)*(degree+1)*sizeof(double));
@@ -107,11 +139,12 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 	int j_glob;
 	int shift;
 	double sum=0;
-	int element=threadIdx.x;
+	int element=threadIdx.x+blockIdx.x*blockDim.x;
 	int n=degree;
 	
 
-
+	if(element<elementsX*elementsY)
+	{
 	 for (int i=0; i<=n;i++)
 		for(int j=0; j<=n;j++)
 			for (int k=0; k<=n;k++)
@@ -166,7 +199,7 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 					}
 				}
 
-		
+	}	
 	free(B);
 	
 		
