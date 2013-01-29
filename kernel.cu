@@ -79,8 +79,52 @@ __global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_de
 				if(col==row){
 				//printf(" col : %i\n", col);
 				csr_matrix[i]=1;	
+				//load[col]=bound[isboundaryNode[col]-1];
+				//printf(" Dirichlet auf : %i \n", col);
+			}
+			
+			
+		}
+
+	// für jeden index i,jh in csr schaue ob i=j und i boundaryNode[i]=1 dann csr[i][j]=1 sonst wenn i!=j und i in boundary node dann csr[i][]=0
+	}
+
+		
+}
+
+
+__global__ void vectorDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode, int entries, int elementsX, int elementsY, int degree, double boundaryValue)
+{ 
+	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	int row=0;
+	int col;
+	int ucindex;
+	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+	double sum=0;
+	double bound[4];
+	bound[0]=1;
+	bound[1]=0;
+	bound[2]=0;
+	bound[3]=0;
+		
+	if(i<entries)
+	{
+		
+		col=csr_col_device[i]; //spalte der großen matrix aber
+
+		
+		while((row<=pointCount) && (csrRowPtr[row]<=i))
+		{		
+			row++;
+		}
+		row--;
+		
+	
+		if((isboundaryNode[col]!=0)||(isboundaryNode[row]!=0)){
+				if(col==row){
+					
 				load[col]=bound[isboundaryNode[col]-1];
-				printf(" Dirichlet auf : %i \n", col);
+			
 			}
 			
 			
@@ -133,6 +177,7 @@ __global__ void BernBinomCoeff(double *M, int n)
 
 __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_device, double*coo_value,int degree, int *elements, double *M, double *M_m, int elementsX, int elementsY)
 {
+	unsigned long int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
 	double *B;
 	B=(double*)malloc((degree+1)*(degree+1)*(degree+1)*(degree+1)*sizeof(double));
 	int i_glob;
@@ -163,7 +208,7 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 						if((k>0) && (i>0) && (i-1<n)&& (k-1<n))
 							sum+=M_m[i-1+n*(k-1)];
 					
-
+					
 					B[shift]=M[j+l*(n+1)]*b/a*sum;
 					sum=0;
 					if((j<n) && (l<n))
@@ -180,10 +225,14 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 					B[shift]+=M[i+k*(n+1)]*a/b*(sum);
 			
 					B[shift]*=(double)(n*n)/(4*n*n-1);
-					
+
+					//if(((i+j+k==0) && (l<2)) || ((i+j+l==0) && (j<2)))
+						B[shift]*=(double)(n*n)/(4*n*n-1);
+					//else
+						//B[shift]*=(double)(n*n)/(degree*(4*n*n-1));
 					//start dumping values into coo list
 			
-						//wrong mapping!!!
+						
 						
 				}
 				for(int i=0; i<(n+1)*(n+1);i++)
@@ -195,7 +244,9 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 						
 						coo_row_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=i_glob;
 						coo_col_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=j_glob;
-						coo_value[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=B[+i+j*(n+1)*(n+1)];
+						
+						//coo_row_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=i_glob*pointCount+j_glob;
+						coo_value[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=B[i+j*(n+1)*(n+1)];
 					}
 				}
 
@@ -203,4 +254,40 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 	free(B);
 	
 		
+}
+
+__global__ void reduce(double* data, int* index, int length)
+{
+	
+	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	int j=0;
+	if((index[i]==index[i+1]) && (index[i]!=index[i-1]))
+		while(index[i]==index[i+j+1])
+		{
+			data[i]+=data[i+j+1];
+			data[i+j+1]=0;
+			index[i+j+1]=-1;
+			j++;
+		}
+
+
+
+}
+
+__global__ void split(int *index, int*cols, int*rows,int pointCount,int length)
+{
+
+	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	if(i<length)
+	{
+		rows[i]=index[i]/pointCount;
+		
+		
+	}
+	__syncthreads();
+	if(i<length)
+	{
+		cols[i]=index[i]%pointCount;
+		
+	}
 }
