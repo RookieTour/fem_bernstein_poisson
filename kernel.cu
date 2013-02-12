@@ -9,7 +9,7 @@
 
 __global__ void fillArray(double* array, int size, double value)
 { 
-	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int i=threadIdx.x+blockIdx.x*blockDim.x;
 	
 	if(i<size){		
 		array[i]=value;
@@ -20,13 +20,13 @@ __global__ void fillArray(double* array, int size, double value)
 }
 
 
-__global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode, int entries, int elementsX, int elementsY, int degree, double boundaryValue)
+__global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode, unsigned int entries, int elementsX, int elementsY, int degree, double boundaryValue)
 { 
-	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int i=threadIdx.x+blockIdx.x*blockDim.x;
 	int row=0;
 	int col;
 	int ucindex;
-	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+	unsigned long int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
 	double sum=0;
 	double bound[4];
 	bound[0]=1;
@@ -93,13 +93,13 @@ __global__ void applyDirichlet(double* load, double* csr_matrix, int* csr_col_de
 }
 
 
-__global__ void vectorDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode, int entries, int elementsX, int elementsY, int degree, double boundaryValue)
+__global__ void vectorDirichlet(double* load, double* csr_matrix, int* csr_col_device,int* csrRowPtr,int *isboundaryNode,unsigned int entries, int elementsX, int elementsY, int degree, double boundaryValue)
 { 
-	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int i=threadIdx.x+blockIdx.x*blockDim.x;
 	int row=0;
 	int col;
 	int ucindex;
-	int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
+	unsigned long int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree)-1;
 	double sum=0;
 	double bound[4];
 	bound[0]=1;
@@ -137,8 +137,8 @@ __global__ void vectorDirichlet(double* load, double* csr_matrix, int* csr_col_d
 }
 __global__ void BernBinomCoeff(double *M, int n)
 {
-	 int i= threadIdx.x;
-	 int j= threadIdx.y;
+	unsigned  int i= threadIdx.x;
+	unsigned  int j= threadIdx.y;
 
 	unsigned int top_0=1;
 	unsigned int top_1=1;
@@ -175,16 +175,16 @@ __global__ void BernBinomCoeff(double *M, int n)
 	
 }
 
-__global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_device, double*coo_value,int degree, int *elements, double *M, double *M_m, int elementsX, int elementsY)
+__global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_device, double*coo_value,int degree,long long int* index, int *elements, double *M, double *M_m, int elementsX, int elementsY)
 {
 	unsigned long int pointCount=(degree+1+(elementsX-1)*degree)*(degree+1+(elementsY-1)*degree);
 	double *B;
 	B=(double*)malloc((degree+1)*(degree+1)*(degree+1)*(degree+1)*sizeof(double));
-	int i_glob;
-	int j_glob;
-	int shift;
+	unsigned int i_glob;
+	unsigned int j_glob;
+	unsigned int shift;
 	double sum=0;
-	int element=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int element=threadIdx.x+blockIdx.x*blockDim.x;
 	int n=degree;
 	
 
@@ -245,49 +245,51 @@ __global__ void ass_A_exact(double a, double b,int *coo_row_device,int *coo_col_
 						coo_row_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=i_glob;
 						coo_col_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=j_glob;
 						
-						//coo_row_device[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=i_glob*pointCount+j_glob;
+						index[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=i_glob*pointCount+j_glob;
 						coo_value[element*(n+1)*(n+1)*(n+1)*(n+1)+i+j*(n+1)*(n+1)]=B[i+j*(n+1)*(n+1)];
 					}
 				}
 
 	}	
 	free(B);
+	//printf("pointCount in assembly: %i \n", pointCount);
 	
 		
 }
 
-__global__ void reduce(double* data, int* index, int length)
+__global__ void reduce(double* data,int* index, int length)
 {
 	
-	int i=threadIdx.x+blockIdx.x*blockDim.x;
-	int j=0;
-	if((index[i]==index[i+1]) && (index[i]!=index[i-1]))
-		while(index[i]==index[i+j+1])
-		{
-			data[i]+=data[i+j+1];
-			data[i+j+1]=0;
-			index[i+j+1]=-1;
+	unsigned int i=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int j=1;
+	if(i<length)
+	{
+		if((index[i]==index[i+1]) && (index[i]!=index[i-1]))
+		{			
+			while((i+j<length) &&(index[i]==index[i+j]))
+			{
+			data[i]+=data[i+j];
+			data[i+j]=0;
+			index[i+j]=-1;
 			j++;
+			}
 		}
+		
+	}
 
 
 
 }
 
-__global__ void split(int *index, int*cols, int*rows,int pointCount,int length)
+__global__ void split(long long int* index, int*cols, int*rows,unsigned long int pointCount,unsigned long int length)
 {
 
-	int i=threadIdx.x+blockIdx.x*blockDim.x;
+	unsigned int i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i<length)
 	{
 		rows[i]=index[i]/pointCount;
-		
-		
-	}
-	__syncthreads();
-	if(i<length)
-	{
 		cols[i]=index[i]%pointCount;
 		
-	}
+		
+	}	
 }
