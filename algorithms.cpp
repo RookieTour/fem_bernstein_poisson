@@ -29,8 +29,8 @@ using namespace std;
 
 int checkcublasStatus ( cublasStatus_t status, const char *msg ) 
 {
-    if ( status != CUBLAS_STATUS_SUCCESS )
-	{
+
+    if ( status != CUBLAS_STATUS_SUCCESS ){
         fprintf (stderr, "!!!! CUBLAS %s ERROR \n", msg);
         return 1;
     }
@@ -40,15 +40,15 @@ int checkcublasStatus ( cublasStatus_t status, const char *msg )
 
 int checkCusparseStatus ( cusparseStatus_t status, const char *msg )
 {
-    if ( status != CUSPARSE_STATUS_SUCCESS )
-	{
+    if ( status != CUSPARSE_STATUS_SUCCESS ){
         fprintf (stderr, "!!!! CUSPARSE %s ERROR \n", msg);
         return 1;
     }
     return 0;
 }
 
-double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int N){
+double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int N)
+{
 	
 	const int max_iter =10000;
 	int k;
@@ -57,9 +57,8 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
 	double a, b, na, r0, r1,dot;
 	double *x =new double[N];
 
-	for (int i = 0; i < N; i++)
-	{      
-		x[i] =0;
+	for (int i = 0; i < N; i++){      
+		x[i]=0;
 	}
 
 	double time1=0.0, tstart;
@@ -103,16 +102,13 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
 		
     k = 1;
 	tstart = clock(); 
-    while (r1 > tol*tol && k <= max_iter)
-	{
-		if (k > 1)
-		{
+    while (r1 > tol*tol && k <= max_iter){
+		if (k > 1){
 			b = r1 / r0;
             cublasStatus = cublasDscal(cublasHandle, N, &b, d_p, 1);
             cublasStatus = cublasDaxpy(cublasHandle, N, &alpha, d_r, 1, d_p, 1);
         }
-		else
-		{
+		else{
 			cublasStatus = cublasDcopy(cublasHandle, N, d_r, 1, d_p, 1);
         }
         cusparseDcsrmv(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, N, N, nz, &alpha, descr, d_val, d_row, d_col, d_p, &beta, d_Ax);
@@ -136,7 +132,7 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
 	cudaThreadSynchronize();
 	time1 += clock() - tstart;
 	time1 = (1000*time1)/CLOCKS_PER_SEC;
-	printf("CG Zeit:  %e ms. \n",time1);
+	printf("CG Zeit pro iteration:  %e ms. \n",time1/k);
     cudaMemcpy(x, d_x, N*sizeof(double), cudaMemcpyDeviceToHost);
  
     cusparseDestroy(cusparseHandle);
@@ -155,6 +151,7 @@ double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int 
 
 void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N)
 {
+
 		int k=0;
 		int m, n;
 		m=N;
@@ -164,12 +161,9 @@ void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N)
 		
 		ofstream File(Filename);
 
-		for(int j=0;j<m;j++)
-		{			
-			for(int i=0;i<n;i++)
-			{
-				if((i==csr_col[k]) &&(csr_row[j]<=k))
-				{
+		for(int j=0;j<m;j++){			
+			for(int i=0;i<n;i++){
+				if((i==csr_col[k]) &&(csr_row[j]<=k)){
 					cout << csr_values[k] << "|";
 					if ((csr_values[k]==1) || (csr_values[k]==0))
 						File << csr_values[k];
@@ -177,8 +171,7 @@ void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N)
 						File << "2";
 					k++;
 				}
-				else
-				{
+				else{
 					cout << "0" << "|";
 					File << "0";
 				}
@@ -189,114 +182,6 @@ void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N)
 	File.close();
 }
 
-void quickSort(double *arr,int *index_i, int *index_j, int left, int right)
-{
-      int i = left, j = right;
-      double tmp;
-	  int itemp, jtemp;
-      int pivot = index_i[(left + right) / 2];
- 
-      /* partition */
-      while (i <= j) {
-            while (index_i[i] < pivot)
-                  i++;
-            while (index_i[j] > pivot)
-                  j--;
-            if (i <= j)
-			{
-                  tmp = arr[i];
-				  itemp = index_i[i];
-				  jtemp = index_j[i];
-
-				  index_i[i]=index_i[j];
-				  index_j[i]=index_j[j];
-                  arr[i] = arr[j];
-				  index_i[j]=itemp;
-				  index_j[j]=jtemp;
-                  arr[j] = tmp;
-                  i++;
-                  j--;
-            }
-      }
-
-      /* recursion */
-      if (left < j)
-            quickSort(arr,index_i, index_j, left, j);
-      if (i < right)
-            quickSort(arr,index_i, index_j, i, right);
-}
-
-
-void SortCOO(double *coo_values, int *coo_row, int *coo_col,int PointsPerElement, int ElementCount)
-{
-	quickSort(coo_values,coo_row,coo_col,0,PointsPerElement*PointsPerElement*ElementCount-1);
-		int start=0;
-		int end;
-		int j=0;
-		for(int i=0;i<ElementCount*PointsPerElement;i++)
-		{
-			while(coo_row[j]==i)
-			{
-				j++;
-			}
-			end=j-1;
-			quickSort(coo_values,coo_col,coo_row,start,end);
-			start=end+1;
-		}
-
-}
-
-int reduceCOO(double *coo_values, int *coo_row, int *coo_col,int PointsPerElement, int ElementCount,unsigned long int length)
-{
-	double *B = new double[length];
-	int *B_row = new int[length];
-	int *B_col = new int[length];
-	
-	int zeroEntries=0;
-	int j;
-	B[0]=coo_values[0];
-	B_col[0]=coo_col[0];
-	B_row[0]=coo_row[0];
-	j=0;
-
-	for(unsigned long int i=1; i<length;i++)
-	{
-		if((B_col[j]==coo_col[i]) && (B_row[j]==coo_row[i]))
-		{			
-				B[j]+=coo_values[i];
-		}
-		else
-		{
-			j++;
-			B[j]=coo_values[i];
-			B_col[j]=coo_col[i];
-			B_row[j]=coo_row[i];
-		}
-	}
-	zeroEntries=length-1-j;
-
-	for(unsigned long int i =0; i<length-zeroEntries;i++)
-	{
-			coo_values[i]=B[i];
-			coo_col[i]=B_col[i];
-			coo_row[i]=B_row[i];			
-	}
-	
-	free(B);
-	free(B_col);
-	free(B_row);
-	printf("values reduced...");
-	return zeroEntries;
-}
-
-
-
-double func(double x, double y)
-{
-	return -2*M_PI*M_PI*cos(2*M_PI*x)*sin(M_PI*y)*sin(M_PI*y)-2*M_PI*M_PI*cos(2*M_PI*y)*sin(M_PI*x)*sin(M_PI*x);
-}
-
-//works as intended (correct for n=1 , n=2 tested only for specific cases n>2 "seems" okay)
 int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree, int elementsX, int elementsY, double sizeX, double sizeY)
 {
 	int ElementCount=elementsX*elementsY;
@@ -305,12 +190,10 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 
 	int *elements= new int[ElementCount*PointsPerElement];
 	
-	for(int k=0; k<ElementCount;k++)
-	{
+	for(int k=0; k<ElementCount;k++){
 		//vertex nodes
 		for(int i=0; i<2;i++)
-			for(int j=0; j<2;j++)
-			{
+			for(int j=0; j<2;j++){
 				elements[k*PointsPerElement+i+j*(degree+1)]=k+k/elementsX+i+j*(elementsX+1);
 				coordinatesX[k*PointsPerElement+i+j*(degree+1)]=k*sizeX/elementsX+i*sizeX/elementsX;
 				coordinatesY[k*PointsPerElement+i+j*(degree+1)]=k*sizeY/elementsY+j*sizeY/elementsY;
@@ -318,8 +201,7 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 
 		//center nodes
 		for(int i=0; i<degree-1;i++)
-			for(int j=0; j<degree-1;j++)
-			{
+			for(int j=0; j<degree-1;j++){
 				elements[k*PointsPerElement+i+2+(j+2)*(degree+1)]=VertexPoints+1+(degree-1)*elementsX
 							+degree*k
 								+(k/elementsX)*((degree*elementsX+1)*(degree-2)+(degree-1)*elementsX+1)
@@ -330,8 +212,7 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 
 		//side nodes
 		for(int i=0; i<degree-1;i++)
-			for(int j=0; j<2;j++)
-			{
+			for(int j=0; j<2;j++){
 				elements[k*PointsPerElement+i+2+j*(degree+1)]=VertexPoints+k*(degree-1)
 																+(k/elementsX)*((degree*elementsX+1)*(degree-1))
 																+i+j*((degree*elementsX+1)*(degree-1)+(degree-1)*elementsX);
@@ -340,8 +221,7 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 				coordinatesY[k*PointsPerElement+i+2+j*(degree+1)]=0;//to be implemented
 			}
 			for(int i=0; i<2;i++)
-				for(int j=0; j<degree-1;j++)
-				{
+				for(int j=0; j<degree-1;j++){
 					elements[k*PointsPerElement+i+(j+2)*(degree+1)]=VertexPoints
 																	+(degree-1)*elementsX+k*(degree)+(k/elementsX)*((degree*elementsX+1)*(degree-2)+(degree-1)*elementsX+1)
 																	+i*degree+j*(degree*elementsX+1);
@@ -349,8 +229,6 @@ int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree,
 					coordinatesX[k*PointsPerElement+i+(j+2)*(degree+1)]=0;//to be implemented
 					coordinatesY[k*PointsPerElement+i+(j+2)*(degree+1)]=0;//to be implemented
 				}
-									
-
 	}
 	return elements;
 }
@@ -426,56 +304,21 @@ int* determineBorders(int elementsX, int elementsY, int degree)
 			return boundaryNodes;
 }
 
-double* assembleLoadVector(double a, double b, int degree, int *elements, int elementsX, int elementsY, double *nodes_x, double *nodes_y, int pointCount)
-{
-	int ElementCount=(elementsX+1)*(elementsY+1);
-	int PointsPerElement=(degree+1)*(degree+1);
-	int m;
-	double xc,yc;	
-	double *load_sub;
-	load_sub=new double[PointsPerElement];
-	double *load= new double[pointCount];
-	for(int k=0;k<ElementCount;k++)
-	{
-
-		//get x,y cordinate from the element k of point P_0
-		//cout << "Element k=" << k << endl;
-		for(int i=0;i<PointsPerElement;i++)
-		{
-			xc=nodes_x[elements[PointsPerElement*k+i]];
-			yc=nodes_y[elements[PointsPerElement*k+i]];
-			//cout <<"i= " <<i << " global: " << elements[4*k+i]<< "  x: " << xc << "  y: "<< yc << endl;
-			load_sub[i]=a*b/((degree+1)*(degree+1))*func(xc,yc);			
-		}
-			for(int i=0;i<4;i++){
-				m=elements[i+k*PointsPerElement];
-				load[m]+=load_sub[i];
-			}
-		
-	}
-	return load;
-}
-
-//works as intended maybe modify to overload and print int and doubles in one routine
 void printMatrix(double* A, int n, int m)
 {
 		
 	string Filename="vektor.txt";		
 	ofstream File(Filename);
 	cout.precision(5);
-	for(int j=0;j<m;j++)
-	{			
-			for(int i=0;i<n;i++)
-			{			 
+	for(int j=0;j<m;j++){			
+			for(int i=0;i<n;i++){			 
 				cout << A[i+j*m]<< "|";
 				File << A[i+j*m] << "\n";
 			}
 			cout << endl;			
-		}
-		
+		}		
 }
 
-//works as intended maybe modify to overload and print int and doubles in one routine
 void printMatrix_int(int* A, int n, int m)
 {
 	cout.precision(2);

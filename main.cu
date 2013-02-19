@@ -25,39 +25,9 @@
 #include <math.h>
 using namespace std;
 
-struct is_zero
-{
-    __host__ __device__
-    bool operator()(double x)
-    {
-	if( x!=0)
-        	return 0;
-	else 
-		return 1;
-
-    }
-};
-
-
-struct is_neg 
-{
-    __host__ __device__
-    bool operator()(int x)
-    {
-	if( x>=0)
-        	return 0;
-	else 
-		return 1;
-
-    }
-};
-
-
 void CUDAreduction(double* data,long long int* index, unsigned long int length, unsigned long int pointCount, unsigned int &nz, int *cols, int *rows, double *crs_data)
 {
-	
-	
-	
+
 	dim3 dimGrid(1+(length)/512,1,1);
 	dim3 dimBlock(512,1,1);
 
@@ -70,41 +40,76 @@ void CUDAreduction(double* data,long long int* index, unsigned long int length, 
 	cudaMalloc((void**)&index_new, length*sizeof(long long int));
 
 	thrust::device_ptr<long long int> keys_new(index_new);
+	printf("sort values...");
 	thrust::sort_by_key(&keys[0], &keys[length], &vals[0]);
-	cudaFree(index_new);
+	printf("ok...");
+
 
 
 	//reduces consequtive vals with equal index and copys reduced data and index into new array
-	//new_end=thrust::reduce_by_key(&keys[0], &keys[length], &vals[0], &keys_new[0], vals_new).second;
-
-	//nz=new_end-&vals_new[0];
-	//printf("length: %i\n",nz);
-
-	//cudaFree(data);
-	//cudaFree(index);
+	printf("reducing multiple entries...");
+	new_end=thrust::reduce_by_key(&keys[0], &keys[length], &vals[0], &keys_new[0], vals_new).second;
+	printf("ok...");
+	nz=new_end-&vals_new[0];
 	
-	//split<<<dimGrid, dimBlock>>>(index_new,cols, rows,pointCount, length);
 
-	split<<<dimGrid, dimBlock>>>(index,cols, rows,pointCount, length);
+	cudaFree(data);
+	cudaFree(index);
+	printf("split entries...");
+	split<<<dimGrid, dimBlock>>>(index_new,cols, rows,pointCount, length);
+	cudaFree(index_new);
+	printf("ok...");	
+}
+
+
+void loadreduction(double *LoadList, double *LoadVector, int length, int *index)
+{
+	
+	
+	thrust::device_ptr<double> vals_new(LoadVector);
+	thrust::device_ptr<int> keys(index);
+	thrust::device_ptr<double>new_end;
+	thrust::device_ptr<double> vals(LoadList);
+	
+	int *index_new;
+	cudaMalloc((void**)&index_new, length*sizeof(int));
+
+	thrust::device_ptr<int> keys_new(index_new);
+	printf("sort values...");
+	thrust::sort_by_key(&keys[0], &keys[length], &vals[0]);
+	printf("ok...");
+
+
+
+	//reduces consequtive vals with equal index and copys reduced data and index into new array
+	printf("reducing multiple entries...");
+	new_end=thrust::reduce_by_key(&keys[0], &keys[length], &vals[0], &keys_new[0], vals_new).second;
+	printf("ok...");
+	
+	int nz=new_end-&vals_new[0];
+	printf("length: %i\n",nz);
+
+	cudaFree(LoadList);
+	cudaFree(index);
+	
 	
 
 }
 
+
 int main()
 {
 	/*Simulation Variables*/
-	int degree=1;	
-	int elementsX=256;
-	int elementsY=256;
+	int degree=2;	
+	int elementsX=100;
+	int elementsY=80;
 	double sizeX=1.0;
 	double sizeY=1.0;
+	double f=1.0;
 
 	/*variables necessary for computation*/
 	unsigned long int ElementCount=elementsX*elementsY;
-	unsigned int lol=0;
-	lol--;
-	
-	printf("Element Count: %u\n", lol);
+
 	unsigned long int PointsPerElement=(degree+1)*(degree+1);
 	int *elements=NULL;
 	int *boundaryNodes=NULL;
@@ -165,6 +170,8 @@ int main()
 	cudaMemcpy(elements_device,elements, ElementCount*PointsPerElement*sizeof(int), cudaMemcpyHostToDevice);
 	printf("done\n");	
 	
+	double time2=0.0, tstart;
+	tstart = clock(); 
 	//precompute binomial coeffitients
 	printf("compute binomial coeffitients...");
 	BernBinomCoeff<<<dimGridM, dimBlockM>>>(M_device, degree);
@@ -178,82 +185,10 @@ int main()
 	
 	//convert coo output into crs format
 	//sort the COO output in parallel, reduction is not workin yet
+	printf("reduce values...");	
 	CUDAreduction(coo_values_device,index,ElementCount*PointsPerElement*PointsPerElement, pointCount+1, nz, coo_col_device, coo_row_device, crs_data);
-
-	//cudaMemcpy(csr_data_device,coo_values_device, (nz)*sizeof(double), cudaMemcpyDeviceToDevice);
-	//cudaMemcpy(csr_col_device,coo_col_device, (nz)*sizeof(int), cudaMemcpyDeviceToDevice);
-
-
-	//copy data back to host, to reduce on CPU
-	double *coo_values = new double[ElementCount*PointsPerElement*PointsPerElement];
-	int *coo_row = new int[ElementCount*PointsPerElement*PointsPerElement];
-	int *coo_col = new int[ElementCount*PointsPerElement*PointsPerElement];
-	long long int *indec = new long long int[ElementCount*PointsPerElement*PointsPerElement];
-
-
-	cudaMemcpy(coo_values,coo_values_device	, ElementCount*PointsPerElement*PointsPerElement*sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(coo_row,coo_row_device		, ElementCount*PointsPerElement*PointsPerElement*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(coo_col,coo_col_device		, ElementCount*PointsPerElement*PointsPerElement*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(indec,index					, ElementCount*PointsPerElement*PointsPerElement*sizeof(long long int), cudaMemcpyDeviceToHost);		
-
-
-
-
-	
-
-
-
-	
-	//reduce values
-	
-	printf("reduce values...");
-	int zeroEntries=reduceCOO(coo_values,coo_row,coo_col,PointsPerElement,ElementCount, nz);
 	printf("done\n");
-
-	nz=ElementCount*PointsPerElement*PointsPerElement-zeroEntries;	
-
-	ofstream file("output normal.txt");
-
-/*	for(int i=0;i<nz;i++)
-		file << "val: " << coo_values[i] << "\n";
-
-	file << "\n";
-
-	for(int i=0;i<nz;i++)
-		file << "col: " << coo_col[i] << "\n";
-	
-	file << "\n";
-
-	for(int i=0;i<nz;i++)
-		file << "row: " << coo_row[i] << "\n";
-
-	for(int i=0;i<nz-1;i++)
-		if(indec[i]>indec[i+1])
-			printf("error!!!!!\n");*/
-
-
-	file <<"nz: " << nz ;
-
-	file.close();
-	
-
-
-	double *csr_data_device;
-	int *csr_col_device;
-
-	cudaFree(coo_values_device);
-	cudaFree(coo_col_device);
-
-	cudaMalloc((void**)&csr_col_device, (nz)*sizeof(int));
-	cudaMalloc((void**)&csr_data_device, (nz)*sizeof(double));
-	cudaMalloc((void**)&coo_row_device, (nz)*sizeof(int));
-	
-
-	//copy data back to device memory	
-	cudaMemcpy(csr_data_device,coo_values, (nz)*sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(coo_row_device,coo_row, (nz)*sizeof(int), cudaMemcpyHostToDevice);
-	cudaMemcpy(csr_col_device,coo_col, (nz)*sizeof(int), cudaMemcpyHostToDevice);
-	
+		
 	int *csrRowPtr=0;		
 	cudaMalloc((void**)&csrRowPtr, (pointCount+2)*sizeof(csrRowPtr[0]));	
 	
@@ -270,12 +205,12 @@ int main()
 		cout << "Conversion from COO to CSR format failed" << endl;
 
 	printf("done\n");
-	
-	int *row_index = new int[pointCount+2];
-	int *col_index = new int[nz];
-	cudaMemcpy(coo_values,csr_data_device,(nz)*sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(row_index,csrRowPtr,(pointCount+2)*sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(col_index,csr_col_device,(nz)*sizeof(int), cudaMemcpyDeviceToHost);
+	cudaThreadSynchronize();
+	time2 += clock() - tstart;
+
+	time2 = (1000*time2)/CLOCKS_PER_SEC;
+
+	printf("Konstruktions Zeit:  %e ms. \n",time2);
 	
 	//assemble load vector
 	//assuming for the time beeing f=0	
@@ -284,11 +219,16 @@ int main()
 	dim3 dimBlockL(512,1,1);
 	
 	printf("fill load vector...");
-
+	int *LoadIndex_device;
+	double *LoadVectorList;
+	cudaMalloc((void**)&LoadVectorList,ElementCount*PointsPerElement*sizeof(double));
+	cudaMalloc((void**)&LoadIndex_device,ElementCount*PointsPerElement*sizeof(int));
 	cudaMalloc((void**)&LoadVector_device,(pointCount+1)*sizeof(double));
-	fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount+1, 0.0);
+	//fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount+1, 0.0);
+	loadVector<<<dimGrid,dimBlock>>>(LoadVectorList, LoadIndex_device,elements_device,  a,b, degree, f, ElementCount);
+	loadreduction(LoadVectorList,LoadVector_device,ElementCount*PointsPerElement,LoadIndex_device);
 	printf("done\n");
-	
+
 	
 	dim3 dimGridK(1+(nz)/512,1,1);
 	dim3 dimBlockK(512,1,1);
@@ -300,8 +240,17 @@ int main()
 	
 	//apply dirichlet boundary conditions /modify to matrix vector product 
 	printf("apply dirichlet...");	
-	applyDirichlet<<<dimGridK,dimBlockK>>>(LoadVector_device, csr_data_device,csr_col_device,csrRowPtr,boundaryNodes_device, nz, elementsX, elementsY, degree, 1.0);
-	vectorDirichlet<<<dimGridK,dimBlockK>>>(LoadVector_device, csr_data_device,csr_col_device,csrRowPtr,boundaryNodes_device, nz, elementsX, elementsY, degree, 1.0);
+	tstart = clock(); 
+	applyDirichlet<<<dimGridK,dimBlockK>>>(LoadVector_device, crs_data,coo_col_device,csrRowPtr,boundaryNodes_device, nz, elementsX, elementsY, degree, 1.0);
+	vectorDirichlet<<<dimGridK,dimBlockK>>>(LoadVector_device, crs_data,coo_col_device,csrRowPtr,boundaryNodes_device, nz, elementsX, elementsY, degree, 1.0);
+	
+	cudaThreadSynchronize();
+	time2=0.0;
+	time2 += clock() - tstart;
+
+	time2 = (1000*time2)/CLOCKS_PER_SEC;
+
+	printf("Dirichlet Zeit:  %e ms. \n",time2);
 	printf("done\n");
 	//get info on device memory
 	size_t freee;  
@@ -312,7 +261,7 @@ int main()
 	
 	//solve system of equations
 	printf("solve equation...\n");
-	double *x=CGsolve(csr_data_device,csr_col_device,csrRowPtr, LoadVector_device,nz,pointCount+1);
+	double *x=CGsolve(crs_data,coo_col_device,csrRowPtr, LoadVector_device,nz,pointCount+1);
 		printf("done\n");
 	
 
@@ -325,7 +274,7 @@ int main()
 	cudaFree(elements_device);
 	cudaFree(M_device);
 	cudaFree(M_m_device);
-	free(coo_values);
+	
 
 
 	//write solution into file
