@@ -28,17 +28,23 @@ using namespace std;
 #ifndef algorithms_h
 #define algorithms_h
 
-
+//solves sparse system (d_val)*x=d_r 
 double* CGsolve(double *d_val, int* d_col, int* d_row, double* d_r, int nz, int N);
 
+//prints CSR matrix
 void printCSRMatrix(double *csr_values, int *csr_col, int *csr_row, int N);
 
+//creates triangulation
 int* createTriangulation(double *coordinatesX, double *coordinatesY, int degree, int elementsX, int elementsY, double sizeX, double sizeY);
 
+//determines border nodes
 int* determineBorders(int elementsX, int elementsY, int degree);
 
+
+//print double matrix
 void printMatrix(double* A, int n, int m);
 
+//prints int matrix
 void printMatrix_int(int* A, int n, int m);
 
 #endif

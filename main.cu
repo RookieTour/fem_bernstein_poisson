@@ -99,10 +99,10 @@ void loadreduction(double *LoadList, double *LoadVector, int length, int *index)
 
 int main()
 {
-	/*Simulation Variables*/
+	//*simulation variables*/
 	int degree=2;	
 	int elementsX=100;
-	int elementsY=80;
+	int elementsY=100;
 	double sizeX=1.0;
 	double sizeY=1.0;
 	double f=1.0;
@@ -138,7 +138,10 @@ int main()
 	int		*boundaryNodes_device;
 	double	*LoadVector_device;
 	double	*crs_data;
-	
+	int *LoadIndex_device;
+	double *LoadVectorList;
+	int *csrRowPtr=0;		
+
 	dim3 dimGrid(1+(elementsX*elementsY)/512,1,1);
 	dim3 dimBlock(512,1,1);
 	dim3 dimGridM(1,1,1);
@@ -153,8 +156,10 @@ int main()
 	cudaMalloc((void**)&coo_col_device, ElementCount*PointsPerElement*PointsPerElement*sizeof(int));
 	cudaMalloc((void**)&index, ElementCount*PointsPerElement*PointsPerElement*sizeof(long long int));
 	cudaMalloc((void**)&crs_data, ElementCount*PointsPerElement*PointsPerElement*sizeof(double));
-
-	
+	cudaMalloc((void**)&LoadVectorList,ElementCount*PointsPerElement*sizeof(double));
+	cudaMalloc((void**)&LoadIndex_device,ElementCount*PointsPerElement*sizeof(int));
+	cudaMalloc((void**)&LoadVector_device,(pointCount+1)*sizeof(double));
+	cudaMalloc((void**)&boundaryNodes_device,(pointCount+1)*sizeof(int));
 	//create triangulation for the simulation
 	printf("create triangulation...");
 	elements=createTriangulation(coordinatesX,coordinatesY,degree,elementsX,elementsY,sizeX,sizeY);
@@ -184,12 +189,12 @@ int main()
 	printf("done\n");
 	
 	//convert coo output into crs format
-	//sort the COO output in parallel, reduction is not workin yet
+	//sort COO output in parallel, and reduce
 	printf("reduce values...");	
 	CUDAreduction(coo_values_device,index,ElementCount*PointsPerElement*PointsPerElement, pointCount+1, nz, coo_col_device, coo_row_device, crs_data);
 	printf("done\n");
 		
-	int *csrRowPtr=0;		
+	
 	cudaMalloc((void**)&csrRowPtr, (pointCount+2)*sizeof(csrRowPtr[0]));	
 	
 	
@@ -213,18 +218,13 @@ int main()
 	printf("Konstruktions Zeit:  %e ms. \n",time2);
 	
 	//assemble load vector
-	//assuming for the time beeing f=0	
+	//assuming f constant
 
 	dim3 dimGridL(1+((pointCount+1))/512,1,1);
 	dim3 dimBlockL(512,1,1);
 	
-	printf("fill load vector...");
-	int *LoadIndex_device;
-	double *LoadVectorList;
-	cudaMalloc((void**)&LoadVectorList,ElementCount*PointsPerElement*sizeof(double));
-	cudaMalloc((void**)&LoadIndex_device,ElementCount*PointsPerElement*sizeof(int));
-	cudaMalloc((void**)&LoadVector_device,(pointCount+1)*sizeof(double));
-	//fillArray<<<dimGridL,dimBlockL>>>(LoadVector_device, pointCount+1, 0.0);
+	printf("fill load vector...");	
+
 	loadVector<<<dimGrid,dimBlock>>>(LoadVectorList, LoadIndex_device,elements_device,  a,b, degree, f, ElementCount);
 	loadreduction(LoadVectorList,LoadVector_device,ElementCount*PointsPerElement,LoadIndex_device);
 	printf("done\n");
@@ -232,7 +232,7 @@ int main()
 	
 	dim3 dimGridK(1+(nz)/512,1,1);
 	dim3 dimBlockK(512,1,1);
-	cudaMalloc((void**)&boundaryNodes_device,(pointCount+1)*sizeof(int));
+
 	cudaMemcpy(boundaryNodes_device,boundaryNodes,(pointCount+1)*sizeof(int),cudaMemcpyHostToDevice);
 
 	
@@ -263,10 +263,6 @@ int main()
 	printf("solve equation...\n");
 	double *x=CGsolve(crs_data,coo_col_device,csrRowPtr, LoadVector_device,nz,pointCount+1);
 		printf("done\n");
-	
-
-
-
 
 	
 	//free memory
@@ -274,6 +270,17 @@ int main()
 	cudaFree(elements_device);
 	cudaFree(M_device);
 	cudaFree(M_m_device);
+
+	cudaFree(coo_values_device);
+	cudaFree(coo_row_device);
+	cudaFree(coo_col_device);
+	cudaFree(index);
+	cudaFree(boundaryNodes_device);
+	cudaFree(LoadVector_device);
+	cudaFree(crs_data);
+	cudaFree(LoadIndex_device);
+	cudaFree(LoadVectorList);
+	cudaFree(csrRowPtr);	
 	
 
 
